@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Google Cloud",
+    "description": "添加一个基于 Gemini Enterprise Agent Platform（Vertex AI）的 Gemini 提供方，并在设置中提供 API Key、项目 ID、区域与模型目录。"
+  }
+}

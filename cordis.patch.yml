@@ -1,0 +1,6 @@
+# Google Cloud provider bundle: one Host row that owns the provider route and
+# the settings namespace the browser half writes. The row id is the settings
+# namespace, so it must not be renamed.
+- insert:
+    - id: llm-google-cloud
+      name: 'dsh-google-cloud-llm'

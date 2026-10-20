@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Google Cloud provider">
+  <defs>
+    <linearGradient id="gcSky" x1="10" y1="8" x2="54" y2="56" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#3d7bfd"/>
+      <stop offset="1" stop-color="#1b4fd8"/>
+    </linearGradient>
+  </defs>
+  <rect x="4" y="4" width="56" height="56" rx="14" fill="url(#gcSky)"/>
+  <path d="M22 41a8.5 8.5 0 0 1-.8-17 11 11 0 0 1 20.9-1.2A8 8 0 0 1 44 41Z"
+        fill="none" stroke="#ffffff" stroke-width="3.2" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M39.5 25.5 43 22m-3.5 11.5L46 36m-11-13.5v-4" stroke="#ffffff" stroke-width="2.6" stroke-linecap="round"/>
+  <circle cx="43" cy="22" r="2.4" fill="#ffffff"/>
+  <circle cx="46" cy="36" r="2.4" fill="#ffffff"/>
+  <circle cx="35" cy="18.5" r="2.4" fill="#ffffff"/>
+</svg>

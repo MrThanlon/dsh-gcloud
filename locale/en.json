@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Google Cloud",
+    "description": "Adds a Gemini provider on the Gemini Enterprise Agent Platform (Vertex AI) and a Settings page for its API key, project id, location, and model catalog."
+  }
+}
