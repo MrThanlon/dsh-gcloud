@@ -11,6 +11,7 @@
 - 模型列表自动更新：优先调用 `publishers/google/models`，成功时并入发现的 Gemini 聊天模型；失败（Express API Key 常无权列出）回退到设置里的模型目录，结果缓存 10 分钟。
 - **代理**：`http://`、`https://`、`socks5://`、`socks5h://`，支持用户名密码；`auto` 读取 `HTTPS_PROXY`/`ALL_PROXY` 并遵守 `NO_PROXY`。
 - 跨提供方历史：别的模型产生的、没有 Gemini 签名的工具调用自动降级为文本，切换模型不会让会话失效。
+- 用户轮内的纯文本 part 一律排在 `functionResponse` 之前：Vertex 会把「functionResponse 后跟文本」的用户轮误判成以模型轮结尾，整轮 400（`Requests ending with a model turn are not supported`）；文本前置可避开。
 - 工具结果以**文本**回填 `functionResponse.response.result`：Gemini 会把响应里的 `$ref` 成员当成“响应分片引用”，工具返回 JSON Schema（`$defs`/`$ref`）时整轮会被 400 拒绝（`The referenced name "#/$defs/…" … does not match to a display_name`），所以这里不解析成对象；超过 512 KB 截断；名字不在本轮已声明工具里的结果也退回文本。
 - 输入模态目前是 **text**：图片会被 Harness 投影成占位文本。
 
@@ -60,7 +61,7 @@ dsh plugin --profile desktop add file:/absolute/path/to/dsh-gcloud
       - id: gemini-4-argon
         name: Gemini 4 Argon
         contextWindow: 1048576
-        maxTokens: 65536
+        maxTokens: 1048576
 ```
 
 ## 请求与代理
@@ -70,7 +71,7 @@ POST {base}/v1/projects/{project}/locations/{location}/publishers/google/models/
 x-goog-api-key: <API Key>
 ```
 
-`base` 默认按区域推导（`global` → `https://aiplatform.googleapis.com`，其他 → `https://{location}-aiplatform.googleapis.com`），可用 `baseURL` 覆盖。直连与代理都走同一个 Node HTTP/1.1 客户端：
+`base` 默认按区域推导（`global` → `https://aiplatform.googleapis.com`，多区域 `us` / `eu` → `https://aiplatform.{location}.rep.googleapis.com`，其他区域 → `https://{location}-aiplatform.googleapis.com`），可用 `baseURL` 覆盖。直连与代理都走同一个 Node HTTP/1.1 客户端：
 
 - `http://` 代理：先发 `CONNECT`，认证用 `Proxy-Authorization: Basic`；
 - `https://` 代理：先与代理建立 TLS，再发 `CONNECT`，随后与目标再建一层 TLS；

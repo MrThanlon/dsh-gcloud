@@ -102,7 +102,8 @@ export interface CardContext {
 
 /** Normalize one model row exactly the way the Host adapter does. */
 function normalizeModel(row: SectionModel | undefined): Required<SectionModel> | undefined {
-  const id = typeof row?.id === 'string' ? row.id.trim() : ''
+  const rawId = typeof row?.id === 'string' ? row.id.trim() : ''
+  const id = rawId.replace(/^(gemini-[23])-([1-9])(?=-)/i, '$1.$2')
   if (id === '') return undefined
   const contextWindow =
     Number.isInteger(row?.contextWindow) && (row?.contextWindow as number) > 0

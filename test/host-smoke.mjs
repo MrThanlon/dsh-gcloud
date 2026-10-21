@@ -302,15 +302,45 @@ const userMessage = [{ role: 'user', content: [{ type: 'text', text: 'hello' }] 
 
 // --- model discovery --------------------------------------------------------
 {
-  const target = await startTarget()
+  const target = await startTarget({
+    models: [
+      { name: 'publishers/google/models/gemini-4-argon', displayName: 'Gemini 4 Argon', supportedActions: ['generateContent'] },
+      { name: 'publishers/google/models/gemini-9-demo', displayName: 'Gemini 9 Demo', supportedActions: ['generateContent'] },
+      { name: 'publishers/google/models/gemini-1-embedding', displayName: 'Embedding', supportedActions: ['predict'] },
+      { name: 'publishers/google/models/gemini-3.8-flash-lite-tts', displayName: 'TTS', supportedActions: ['generateContent'] },
+      { name: 'publishers/google/models/gemini-omni-1.1-flash-preview', displayName: 'Omni', supportedActions: ['generateContent'] },
+      { name: 'publishers/google/models/gemini-nano-banana-2.1', displayName: 'Nano Banana', supportedActions: ['generateContent'] },
+    ],
+  })
   const adapter = mount({ projectId: 'demo-project', baseURL: target.url })
   const models = await adapter.listModels('google-cloud')
   assert.deepEqual(
     models.map((model) => model.id),
-    ['gemini-4-argon', 'gemini-9-demo', 'gemini-3-5-flash', 'gemini-2.5-flash'],
+    [
+      'gemini-4-argon',
+      'gemini-9-demo',
+      'gemini-3.8-flash',
+      'gemini-3.7-flash',
+      'gemini-3.6-flash',
+      'gemini-3.5-flash',
+      'gemini-3.5-flash-lite',
+      'gemini-3.1-pro-preview',
+      'gemini-3.1-flash-lite',
+      'gemini-3-flash-preview',
+      'gemini-2.5-pro',
+      'gemini-2.5-flash',
+      'gemini-2.5-flash-lite',
+    ],
   )
   const resolved = await adapter.resolveModel('google-cloud', 'gemini-9-demo')
   assert.equal(resolved.context.contextWindow, 1048576)
+  // Legacy hyphenated minor-version ids resolve and stream against canonical dot ids
+  const legacyResolved = await adapter.resolveModel('google-cloud', 'gemini-3-5-flash')
+  assert.equal(legacyResolved.id, 'gemini-3.5-flash')
+  await collect(adapter, { provider: 'google-cloud', model: 'gemini-3-5-flash', messages: userMessage, reasoningEffort: 'off' })
+  const legacyReq = target.seen.requests.at(-1)
+  assert.ok(legacyReq.url.includes('/models/gemini-3.5-flash:streamGenerateContent'))
+  assert.deepEqual(JSON.parse(legacyReq.body).generationConfig.thinkingConfig, { thinkingLevel: 'MINIMAL', includeThoughts: false })
   await target.close()
 }
 
@@ -319,7 +349,7 @@ const userMessage = [{ role: 'user', content: [{ type: 'text', text: 'hello' }] 
   const target = await startTarget({ models: 'denied' })
   const adapter = mount({ projectId: 'demo-project', baseURL: target.url })
   const models = await adapter.listModels('google-cloud')
-  assert.equal(models.length, 3)
+  assert.equal(models.length, 12)
   await target.close()
 }
 
@@ -488,6 +518,42 @@ const userMessage = [{ role: 'user', content: [{ type: 'text', text: 'hello' }] 
     body.contents.flatMap((content) => content.parts).some((part) => part.functionCall !== undefined),
     false,
     'an unanswered function call is not sent',
+  )
+  await target.close()
+}
+
+// --- text following a functionResponse is moved to the front of the turn ----
+{
+  const target = await startTarget()
+  const adapter = mount({ projectId: 'demo-project', baseURL: target.url })
+  const parts = [
+    { functionCall: { name: 'read', args: { path: 'a' } }, thoughtSignature: 'sig-1' },
+    { functionCall: { name: 'read', args: { path: 'b' } }, thoughtSignature: 'sig-2' },
+  ]
+  await collect(adapter, {
+    provider: 'google-cloud',
+    model: 'gemini-4-argon',
+    messages: [
+      ...userMessage,
+      {
+        role: 'assistant',
+        content: [
+          { type: 'tool-call', id: 'c1', name: 'read', arguments: '{"path":"a"}' },
+          { type: 'tool-call', id: 'c2', name: 'read', arguments: '{"path":"b"}' },
+        ],
+        source: { kind: 'model', provider: 'google-cloud', model: 'gemini-4-argon', replayState: { response: { v: 1, model: 'gemini-4-argon', parts } } },
+      },
+      { role: 'tool', toolCallId: 'c1', source: { kind: 'tool', callId: 'c1' }, content: [{ type: 'text', text: 'content of a' }] },
+      { role: 'tool', toolCallId: 'c2', source: { kind: 'tool', callId: 'c2' }, content: [{ type: 'text', text: 'content of b' }] },
+      { role: 'user', content: [{ type: 'text', text: 'now summarize' }] },
+    ],
+  })
+  const last = JSON.parse(target.seen.requests.at(-1).body).contents.at(-1)
+  assert.equal(last.role, 'user')
+  assert.deepEqual(
+    last.parts.map((part) => (part.functionResponse !== undefined ? 'response' : 'text')),
+    ['text', 'response', 'response'],
+    'plain text must not follow a functionResponse inside one user turn',
   )
   await target.close()
 }

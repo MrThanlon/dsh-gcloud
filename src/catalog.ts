@@ -8,7 +8,7 @@
  * interrogate the endpoint on every render.
  */
 import type { ModelEntry, ProviderSettings } from './config.js'
-import { DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_TOKENS, endpointOf } from './config.js'
+import { canonicalModelId, DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_TOKENS, endpointOf } from './config.js'
 import { parseEndpoint, performRequest, readAll } from './transport.js'
 
 /** How long one discovery answer stands. */
@@ -19,7 +19,8 @@ const DISCOVERY_TIMEOUT_MS = 6000
 const DISCOVERY_BODY_LIMIT = 4 * 1024 * 1024
 
 /** Model families published by `publishers/google` that cannot serve a chat call. */
-const NON_CHAT_SUFFIX = /-(image|tts|live|transcribe|translate|embedding|robotics|vision|custom|omni)$/i
+const NON_CHAT_MODEL =
+  /(?:^gemini-(?:omni|live|embedding|nano-banana)(?:-|$)|-(?:image|tts|live|transcribe|translate|embedding|robotics|vision|custom|omni|audio)(?:-|$))/i
 
 /** One cached discovery answer. */
 interface CatalogAnswer {
@@ -42,9 +43,9 @@ export function discoveredModel(row: unknown, configured: readonly ModelEntry[])
   const record = row as { name?: unknown; displayName?: unknown; supportedActions?: unknown }
   const name = typeof record.name === 'string' ? record.name : ''
   const marker = name.lastIndexOf('/models/')
-  const id = marker === -1 ? '' : name.slice(marker + '/models/'.length)
+  const id = marker === -1 ? '' : canonicalModelId(name.slice(marker + '/models/'.length))
   if (id === '' || !/^gemini-/i.test(id)) return undefined
-  if (NON_CHAT_SUFFIX.test(id)) return undefined
+  if (NON_CHAT_MODEL.test(id)) return undefined
   const actions = Array.isArray(record.supportedActions) ? record.supportedActions : undefined
   if (actions !== undefined && actions.length > 0 && !actions.includes('generateContent')) return undefined
   const known = configured.find((model) => model.id === id)
@@ -79,10 +80,11 @@ export class ModelCatalog {
 
   /** Resolve one exact model id against the configured and discovered catalogs. */
   known(id: string): ModelEntry | undefined {
-    const configured = this.configured().find((model) => model.id === id)
+    const target = canonicalModelId(id)
+    const configured = this.configured().find((model) => model.id === target)
     if (configured !== undefined) return configured
     for (const answer of this.cache.values()) {
-      const hit = answer.models.find((model) => model.id === id)
+      const hit = answer.models.find((model) => model.id === target)
       if (hit !== undefined) return hit
     }
     return undefined

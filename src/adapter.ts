@@ -28,7 +28,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ModelCatalog } from './catalog.js'
 import type { ModelEntry, ProviderSettings } from './config.js'
-import { DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_TOKENS, endpointOf } from './config.js'
+import { canonicalModelId, DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_TOKENS, endpointOf } from './config.js'
 import { llmError } from './errors.js'
 import { buildTools, projectMessages } from './projection.js'
 import type { GeminiPart } from './projection.js'
@@ -76,14 +76,26 @@ function usesThinkingBudget(model: string): boolean {
   return /^gemini-2[.-]5/i.test(model)
 }
 
+/** Gemini 3.0–3.6 Flash/Flash-Lite models accept MINIMAL as their lowest thinking level. */
+function supportsMinimalThinkingLevel(model: string): boolean {
+  return /^gemini-3(?:|-0|\.[156])-flash/i.test(model)
+}
+
 /** Translate one effort id into the request's thinking configuration. */
 function thinkingConfig(model: string, effort: string | undefined): Record<string, unknown> {
   const includeThoughts = effort !== undefined && effort !== 'off'
   if (usesThinkingBudget(model)) {
-    const budget = effort === 'low' ? 1024 : effort === 'medium' ? 8192 : effort === 'high' ? 24576 : 0
+    if (effort === undefined || effort === 'off') {
+      // Gemini 2.5 Pro cannot turn off thinking (min budget 128); -1 uses dynamic budget.
+      const budget = /^gemini-2[.-]5-pro/i.test(model) ? -1 : 0
+      return { thinkingBudget: budget, includeThoughts: false }
+    }
+    const maxBudget = /^gemini-2[.-]5-pro/i.test(model) ? 32768 : 24576
+    const budget = effort === 'low' ? 1024 : effort === 'medium' ? 8192 : maxBudget
     return { thinkingBudget: budget, includeThoughts }
   }
-  const level = effort === 'medium' ? 'MEDIUM' : effort === 'high' ? 'HIGH' : 'LOW'
+  const offLevel = supportsMinimalThinkingLevel(model) ? 'MINIMAL' : 'LOW'
+  const level = effort === 'medium' ? 'MEDIUM' : effort === 'high' ? 'HIGH' : effort === 'low' ? 'LOW' : offLevel
   return { thinkingLevel: level, includeThoughts }
 }
 
@@ -211,7 +223,8 @@ export class GoogleCloudAdapter implements LlmAdapter {
     }
     const apiKey = rawKey
 
-    const projected = projectMessages(options, options.model)
+    const modelId = canonicalModelId(options.model)
+    const projected = projectMessages(options, modelId)
     const contents = projected.contents
     // Vertex requires the request to end with a user turn. An interrupted turn
     // can leave a model turn whose tool results never arrived, which it refuses
@@ -228,7 +241,7 @@ export class GoogleCloudAdapter implements LlmAdapter {
       throw llmError(`${MODULE}: the request carries no model-visible content`, 'INVALID_REQUEST')
     }
 
-    const generationConfig: Record<string, unknown> = { thinkingConfig: thinkingConfig(options.model, options.reasoningEffort) }
+    const generationConfig: Record<string, unknown> = { thinkingConfig: thinkingConfig(modelId, options.reasoningEffort) }
     if (typeof options.temperature === 'number') generationConfig.temperature = options.temperature
     if (Number.isSafeInteger(options.maxTokens) && (options.maxTokens as number) > 0) {
       generationConfig.maxOutputTokens = options.maxTokens
@@ -243,7 +256,7 @@ export class GoogleCloudAdapter implements LlmAdapter {
     const endpoint = parseEndpoint(endpointOf(settings.baseURL, settings.location))
     const path = `${endpoint.prefix}/v1/projects/${encodeURIComponent(settings.projectId)}/locations/${encodeURIComponent(
       settings.location,
-    )}/publishers/google/models/${encodeURIComponent(options.model)}:streamGenerateContent?alt=sse`
+    )}/publishers/google/models/${encodeURIComponent(modelId)}:streamGenerateContent?alt=sse`
     const payload = JSON.stringify(body)
 
     const controller = new AbortController()
@@ -301,7 +314,7 @@ export class GoogleCloudAdapter implements LlmAdapter {
       recordRejectedRequest({
         status: response.status,
         detail,
-        model: options.model,
+        model: modelId,
         droppedTrailing,
         contents: contents.map((content) => ({
           role: content.role,
@@ -483,7 +496,7 @@ export class GoogleCloudAdapter implements LlmAdapter {
       yield {
         type: 'finish',
         reason,
-        ...(parts.length > 0 ? { replayState: { response: { v: 1, model: options.model, parts } } } : {}),
+        ...(parts.length > 0 ? { replayState: { response: { v: 1, model: modelId, parts } } } : {}),
       }
     } finally {
       settle()

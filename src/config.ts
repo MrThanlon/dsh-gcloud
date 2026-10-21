@@ -25,10 +25,25 @@ export const DEFAULT_IDLE_TIMEOUT_MS = 300000
 
 /** Models offered until the profile declares its own catalog. */
 export const MODEL_DEFAULTS = [
-  { id: 'gemini-4-argon', name: 'Gemini 4 Argon', contextWindow: 1048576, maxTokens: 65536 },
-  { id: 'gemini-3-5-flash', name: 'Gemini 3.5 Flash', contextWindow: 1048576, maxTokens: 65536 },
+  { id: 'gemini-4-argon', name: 'Gemini 4 Argon', contextWindow: 1048576, maxTokens: 1048576 },
+  { id: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash', contextWindow: 1048576, maxTokens: 65536 },
+  { id: 'gemini-3.7-flash', name: 'Gemini 3.7 Flash', contextWindow: 1048576, maxTokens: 65536 },
+  { id: 'gemini-3.6-flash', name: 'Gemini 3.6 Flash', contextWindow: 1048576, maxTokens: 65536 },
+  { id: 'gemini-3.5-flash', name: 'Gemini 3.5 Flash', contextWindow: 1048576, maxTokens: 65536 },
+  { id: 'gemini-3.5-flash-lite', name: 'Gemini 3.5 Flash-Lite', contextWindow: 1048576, maxTokens: 65536 },
+  { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro (Preview)', contextWindow: 1048576, maxTokens: 65536 },
+  { id: 'gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash-Lite', contextWindow: 1048576, maxTokens: 65536 },
+  { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash (Preview)', contextWindow: 1048576, maxTokens: 65536 },
+  { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', contextWindow: 1048576, maxTokens: 65536 },
   { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', contextWindow: 1048576, maxTokens: 65536 },
+  { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash-Lite', contextWindow: 1048576, maxTokens: 65536 },
 ] as const
+
+/** Rewrite legacy hyphenated minor-version ids (e.g. `gemini-3-5-flash` → `gemini-3.5-flash`). */
+export function canonicalModelId(id: string): string {
+  const trimmed = id.trim()
+  return trimmed.replace(/^(gemini-[23])-([1-9])(?=-)/i, '$1.$2')
+}
 
 /** One advertised model. */
 export interface ModelEntry {
@@ -143,9 +158,11 @@ function readField<T>(field: Volatile<T> | undefined, fallback: T): T {
 /** Keep only well-formed catalog rows so one bad row cannot break the route. */
 export function normalizeModels(models: readonly Partial<ModelEntry>[] | undefined): ModelEntry[] {
   const rows: ModelEntry[] = []
+  const seen = new Set<string>()
   for (const entry of models ?? []) {
-    const id = typeof entry.id === 'string' ? entry.id.trim() : ''
-    if (id === '') continue
+    const id = typeof entry.id === 'string' ? canonicalModelId(entry.id) : ''
+    if (id === '' || seen.has(id)) continue
+    seen.add(id)
     const contextWindow =
       Number.isSafeInteger(entry.contextWindow) && (entry.contextWindow as number) > 0
         ? (entry.contextWindow as number)
@@ -185,5 +202,7 @@ export function readConfig(config: RawConfig | undefined): ProviderSettings {
 export function endpointOf(baseURL: string, location: string): string {
   const override = baseURL.endsWith('/') ? baseURL.slice(0, -1) : baseURL
   if (override !== '') return override
-  return location === 'global' ? 'https://aiplatform.googleapis.com' : `https://${location}-aiplatform.googleapis.com`
+  if (location === 'global') return 'https://aiplatform.googleapis.com'
+  if (location === 'us' || location === 'eu') return `https://aiplatform.${location}.rep.googleapis.com`
+  return `https://${location}-aiplatform.googleapis.com`
 }

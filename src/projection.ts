@@ -7,6 +7,7 @@
  * `functionCall` is refused.
  */
 import type { GenerateOptions, RequestMessage, ToolSchema } from '@deepseek-ai/dsh-llm'
+import { canonicalModelId } from './config.js'
 
 /** One Gemini content block. */
 export interface GeminiPart {
@@ -118,7 +119,9 @@ export function replayParts(replayState: unknown, model: string): GeminiPart[] |
   const response = (replayState as { response?: unknown }).response
   if (response === null || typeof response !== 'object') return undefined
   const envelope = response as { v?: unknown; model?: unknown; parts?: unknown }
-  if (envelope.v !== 1 || envelope.model !== model) return undefined
+  if (envelope.v !== 1 || typeof envelope.model !== 'string' || canonicalModelId(envelope.model) !== canonicalModelId(model)) {
+    return undefined
+  }
   if (!Array.isArray(envelope.parts) || envelope.parts.length === 0) return undefined
   return envelope.parts as GeminiPart[]
 }
@@ -133,14 +136,39 @@ export function projectMessages(
   const toolNames = new Map<string, string>()
   const degraded = new Set<string>()
 
+  /**
+   * Order the parts of one user turn the way Vertex parses them.
+   *
+   * Vertex mis-reads a turn whose `functionResponse` parts are followed by
+   * plain text: it loses the turn boundary and refuses the whole request with
+   * "Requests ending with a model turn are not supported", even though the
+   * request ends with a user turn. Text first, then the responses, is
+   * accepted. Relative order inside each group is kept, so parallel responses
+   * still line up with the calls of the turn above.
+   */
+  const orderUserParts = (parts: GeminiPart[]): GeminiPart[] => {
+    let responses = 0
+    for (const part of parts) if (part.functionResponse !== undefined) responses += 1
+    if (responses === 0 || responses === parts.length) return parts
+    const lead: GeminiPart[] = []
+    const tail: GeminiPart[] = []
+    for (const part of parts) {
+      if (part.functionResponse === undefined) lead.push(part)
+      else tail.push(part)
+    }
+    return [...lead, ...tail]
+  }
+
   const push = (role: 'user' | 'model', parts: GeminiPart[]): void => {
     if (parts.length === 0) return
+    const ordered = role === 'user' ? orderUserParts(parts) : parts
     const last = contents[contents.length - 1]
     if (last !== undefined && last.role === role) {
-      last.parts.push(...parts)
+      last.parts.push(...ordered)
+      if (role === 'user') last.parts = orderUserParts(last.parts)
       return
     }
-    contents.push({ role, parts })
+    contents.push({ role, parts: ordered })
   }
 
   for (const message of options.messages as readonly RequestMessage[]) {
