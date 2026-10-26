@@ -122,6 +122,23 @@ export function ProviderCard(props: PropsRuntime<'settings.models.provider-card'
             <p className="gcx-hint">{labels.locationHint}</p>
           </div>
           <div className="gcx-field">
+            <label className="gcx-label" htmlFor="gcx-baseurl">
+              {labels.baseURL}
+            </label>
+            <input
+              id="gcx-baseurl"
+              className="gcx-input"
+              type="text"
+              spellCheck={false}
+              autoComplete="off"
+              disabled={disabled}
+              placeholder="https://aiplatform.googleapis.com"
+              value={view.baseURL}
+              onChange={(event) => face.edit('baseURL', event.target.value)}
+            />
+            <p className="gcx-hint">{labels.baseURLHint}</p>
+          </div>
+          <div className="gcx-field">
             <label className="gcx-label" htmlFor="gcx-proxy">
               {labels.proxy}
             </label>

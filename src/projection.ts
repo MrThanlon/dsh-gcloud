@@ -16,6 +16,7 @@ export interface GeminiPart {
   thoughtSignature?: string
   functionCall?: { name: string; args?: unknown }
   functionResponse?: { name: string; response: unknown }
+  inlineData?: { mimeType: string; data: string }
 }
 
 /** One Gemini conversation turn. */
@@ -126,11 +127,17 @@ export function replayParts(replayState: unknown, model: string): GeminiPart[] |
   return envelope.parts as GeminiPart[]
 }
 
+export type ImageResolver = (
+  ref: unknown,
+  signal?: AbortSignal,
+) => Promise<{ data: string; mimeType: string } | undefined> | { data: string; mimeType: string } | undefined
+
 /** One request's message projection, built once per stream. */
-export function projectMessages(
+export async function projectMessages(
   options: GenerateOptions,
   model: string,
-): { contents: GeminiContent[]; systemInstruction?: { parts: { text: string }[] } } {
+  resolveImage?: ImageResolver,
+): Promise<{ contents: GeminiContent[]; systemInstruction?: { parts: { text: string }[] } }> {
   const contents: GeminiContent[] = []
   const systemTexts: string[] = []
   const toolNames = new Map<string, string>()
@@ -191,10 +198,52 @@ export function projectMessages(
         const parts: GeminiPart[] = []
         for (const block of content) {
           if (block === null || typeof block !== 'object') continue
-          const item = block as { type?: unknown; text?: unknown; attachment?: { name?: unknown } }
-          if (item.type === 'text' && typeof item.text === 'string' && item.text !== '') parts.push({ text: item.text })
-          else if (item.type === 'image') parts.push({ text: '[image attachment omitted by this route]' })
-          else if (item.type === 'file' && item.attachment !== undefined) parts.push({ text: `[file ${String(item.attachment.name)}]` })
+          const item = block as {
+            type?: unknown
+            text?: unknown
+            data?: unknown
+            mediaType?: unknown
+            mimeType?: unknown
+            attachment?: { name?: unknown; data?: unknown; mediaType?: unknown }
+          }
+          if (item.type === 'text' && typeof item.text === 'string' && item.text !== '') {
+            parts.push({ text: item.text })
+          } else if (item.type === 'image') {
+            let data =
+              typeof item.data === 'string'
+                ? item.data
+                : typeof item.attachment?.data === 'string'
+                  ? item.attachment.data
+                  : undefined
+            let mediaType =
+              typeof item.mediaType === 'string'
+                ? item.mediaType
+                : typeof item.mimeType === 'string'
+                  ? item.mimeType
+                  : typeof item.attachment?.mediaType === 'string'
+                    ? item.attachment.mediaType
+                    : 'image/png'
+
+            if ((data === undefined || data === '') && item.attachment !== undefined && resolveImage !== undefined) {
+              try {
+                const resolved = await resolveImage(item.attachment, options.signal)
+                if (resolved?.data) {
+                  data = resolved.data
+                  if (resolved.mimeType) mediaType = resolved.mimeType
+                }
+              } catch {
+                // Resolution failures fall through to placeholder
+              }
+            }
+
+            if (data !== undefined && data !== '') {
+              parts.push({ inlineData: { mimeType: String(mediaType), data } })
+            } else {
+              parts.push({ text: '[image attachment omitted by this route]' })
+            }
+          } else if (item.type === 'file' && item.attachment !== undefined) {
+            parts.push({ text: `[file ${String(item.attachment.name)}]` })
+          }
         }
         push('user', parts)
         break

@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Offline client-half test: the built browser bundle registers exactly one
  * Models-page provider card, renders collapsed with a summary, expands to the
@@ -7,6 +8,9 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
+import { test } from 'vitest'
+
+test('client smoke test', async () => {
 
 const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
 let definition
@@ -208,6 +212,18 @@ assert.deepEqual(proxyWrite, { op: 'set', path: ['proxy'], value: 'socks5://127.
 tree = component(props)
 assert.equal(field(tree, 'gcx-proxy').props.value, 'socks5://127.0.0.1:1080')
 
+// --- baseURL is persisted with the settings -------------------------------
+tree = component(props)
+assert.equal(field(tree, 'gcx-baseurl').props.value, '')
+field(tree, 'gcx-baseurl').props.onChange({ target: { value: 'https://my-custom-proxy.internal' } })
+tree = component(props)
+button(tree, 'primary').props.onClick()
+await new Promise((resolve) => setTimeout(resolve, 5))
+const baseurlWrite = writes.at(-1).find((operation) => operation.path[0] === 'baseURL')
+assert.deepEqual(baseurlWrite, { op: 'set', path: ['baseURL'], value: 'https://my-custom-proxy.internal' })
+tree = component(props)
+assert.equal(field(tree, 'gcx-baseurl').props.value, 'https://my-custom-proxy.internal')
+
 // --- invalid catalog lines block the save --------------------------------
 field(tree, 'gcx-models').props.onChange({ target: { value: 'bad id | x' } })
 tree = component(props)
@@ -241,3 +257,4 @@ for (const effect of effects) {
 }
 
 console.log('client smoke test: OK')
+})

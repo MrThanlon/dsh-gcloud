@@ -30,7 +30,7 @@ export default defineConfig([
     dts: false,
     clean: true,
     sourcemap: false,
-    deps: { neverBundle: ['react', 'react/jsx-runtime'] },
+    deps: { neverBundle: ['react', 'react/jsx-runtime', 'react-dom'] },
     define: { 'process.env.NODE_ENV': '"production"' },
   },
 ])

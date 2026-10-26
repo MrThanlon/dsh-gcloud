@@ -23,6 +23,8 @@ export interface SectionModel {
   name?: string
   contextWindow?: number
   maxTokens?: number
+  inputModalities?: readonly string[]
+  input?: readonly string[]
 }
 
 /** The Host section this card edits. */
@@ -39,7 +41,7 @@ export interface ProviderSection {
 }
 
 /** Editable text fields, keyed by the draft member they write. */
-export type DraftField = 'projectId' | 'location' | 'proxy' | 'modelsText'
+export type DraftField = 'projectId' | 'location' | 'baseURL' | 'proxy' | 'modelsText'
 
 /** What the component renders. */
 export interface CardView {
@@ -53,6 +55,7 @@ export interface CardView {
   notice: 'saved' | null
   projectId: string
   location: string
+  baseURL: string
   proxy: string
   modelsText: string
   modelCount: number
@@ -100,8 +103,13 @@ export interface CardContext {
   }
 }
 
+/** One normalized model row. */
+export type NormalizedSectionModel = Required<Pick<SectionModel, 'id' | 'name' | 'contextWindow' | 'maxTokens'>> & {
+  inputModalities: readonly string[]
+}
+
 /** Normalize one model row exactly the way the Host adapter does. */
-function normalizeModel(row: SectionModel | undefined): Required<SectionModel> | undefined {
+function normalizeModel(row: SectionModel | undefined): NormalizedSectionModel | undefined {
   const rawId = typeof row?.id === 'string' ? row.id.trim() : ''
   const id = rawId.replace(/^(gemini-[23])-([1-9])(?=-)/i, '$1.$2')
   if (id === '') return undefined
@@ -112,21 +120,26 @@ function normalizeModel(row: SectionModel | undefined): Required<SectionModel> |
   const maxTokens =
     Number.isInteger(row?.maxTokens) && (row?.maxTokens as number) > 0 ? (row?.maxTokens as number) : DEFAULT_MAX_TOKENS
   const name = typeof row?.name === 'string' && row.name.trim() !== '' ? row.name.trim() : id
-  return { id, name, contextWindow, maxTokens }
+  const rawMods = row?.inputModalities ?? row?.input
+  const inputModalities =
+    Array.isArray(rawMods) && rawMods.length > 0
+      ? rawMods.filter((m): m is string => typeof m === 'string')
+      : ['text', 'image']
+  return { id, name, contextWindow, maxTokens, inputModalities }
 }
 
 /** Render the catalog as editable lines. */
 export function formatModels(models: readonly SectionModel[] | undefined): string {
   return (models ?? [])
     .map((model) => normalizeModel(model))
-    .filter((model): model is Required<SectionModel> => model !== undefined)
+    .filter((model): model is NormalizedSectionModel => model !== undefined)
     .map((model) => `${model.id} | ${model.name} | ${model.contextWindow} | ${model.maxTokens}`)
     .join('\n')
 }
 
 /** Parse the editable catalog; undefined means the draft is invalid. */
-export function parseModels(text: string): Required<SectionModel>[] | undefined {
-  const rows: Required<SectionModel>[] = []
+export function parseModels(text: string): NormalizedSectionModel[] | undefined {
+  const rows: NormalizedSectionModel[] = []
   for (const raw of text.split('\n')) {
     const line = raw.trim()
     if (line === '') continue
@@ -145,6 +158,13 @@ export function parseModels(text: string): Required<SectionModel>[] | undefined 
       if (!Number.isInteger(value) || value <= 0) return undefined
       row[key] = value
     }
+    if ((columns[4] ?? '') !== '') {
+      const modalities = columns[4]
+        .split(',')
+        .map((col) => col.trim())
+        .filter((col) => col === 'text' || col === 'image')
+      if (modalities.length > 0) row.inputModalities = modalities
+    }
     const normalized = normalizeModel(row)
     if (normalized === undefined) return undefined
     rows.push(normalized)
@@ -156,9 +176,10 @@ export function parseModels(text: string): Required<SectionModel>[] | undefined 
 interface Saved {
   projectId: string
   location: string
+  baseURL: string
   proxy: string
   modelsText: string
-  models: Required<SectionModel>[]
+  models: NormalizedSectionModel[]
   provider: string
   apiKeyEnv: string
 }
@@ -167,10 +188,11 @@ interface Saved {
 function savedOf(section: ProviderSection | undefined): Saved {
   const models = (section?.models ?? [])
     .map((model) => normalizeModel(model))
-    .filter((model): model is Required<SectionModel> => model !== undefined)
+    .filter((model): model is NormalizedSectionModel => model !== undefined)
   return {
     projectId: typeof section?.projectId === 'string' ? section.projectId : '',
     location: typeof section?.location === 'string' && section.location !== '' ? section.location : 'global',
+    baseURL: typeof section?.baseURL === 'string' ? section.baseURL : '',
     proxy: typeof section?.proxy === 'string' ? section.proxy : '',
     modelsText: formatModels(models),
     models,
@@ -184,6 +206,7 @@ function savedOf(section: ProviderSection | undefined): Saved {
 interface Draft {
   projectId: string
   location: string
+  baseURL: string
   proxy: string
   modelsText: string
 }
@@ -257,7 +280,13 @@ export class CardController {
   }
 
   private draftOf(saved: Saved): Draft {
-    return { projectId: saved.projectId, location: saved.location, proxy: saved.proxy, modelsText: saved.modelsText }
+    return {
+      projectId: saved.projectId,
+      location: saved.location,
+      baseURL: saved.baseURL,
+      proxy: saved.proxy,
+      modelsText: saved.modelsText,
+    }
   }
 
   private build(): CardView {
@@ -266,6 +295,7 @@ export class CardController {
     const dirty =
       this.draft.projectId !== this.saved.projectId ||
       this.draft.location !== this.saved.location ||
+      this.draft.baseURL !== this.saved.baseURL ||
       this.draft.proxy !== this.saved.proxy ||
       this.draft.modelsText !== this.saved.modelsText ||
       this.keyDraft.trim() !== ''
@@ -280,6 +310,7 @@ export class CardController {
       notice: this.notice,
       projectId: this.draft.projectId,
       location: this.draft.location,
+      baseURL: this.draft.baseURL,
       proxy: this.draft.proxy,
       modelsText: this.draft.modelsText,
       modelCount: models === undefined ? this.saved.models.length : models.length,
@@ -369,6 +400,11 @@ export class CardController {
     if (draft.location.trim() !== saved.location) {
       operations.push(
         draft.location.trim() === '' ? { op: 'unset', path: ['location'] } : setOp(['location'], draft.location.trim()),
+      )
+    }
+    if (draft.baseURL.trim() !== saved.baseURL) {
+      operations.push(
+        draft.baseURL.trim() === '' ? { op: 'unset', path: ['baseURL'] } : setOp(['baseURL'], draft.baseURL.trim()),
       )
     }
     if (draft.proxy.trim() !== saved.proxy) {

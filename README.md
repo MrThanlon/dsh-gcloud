@@ -91,7 +91,7 @@ x-goog-api-key: <API Key>
 | [`src/client/card.tsx`](src/client/card.tsx) | 卡片组件（折叠摘要 + 字段 + 保存） |
 | [`src/client/form.ts`](src/client/form.ts) | 草稿、凭据探测与设置写入 |
 | [`src/client/harness.ts`](src/client/harness.ts) | Harness 客户端服务与槽位的类型接线 |
-| [`scripts/wrap-client.mjs`](scripts/wrap-client.mjs) | 把 CJS bundle 包成 `window.__ModuleLoader__` 形式 |
+| [`scripts/wrap-client.ts`](scripts/wrap-client.ts) | 把 CJS bundle 包成 `window.__ModuleLoader__` 形式 |
 
 ## 已知限制
 

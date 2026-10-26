@@ -28,7 +28,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ModelCatalog } from './catalog.js'
 import type { ModelEntry, ProviderSettings } from './config.js'
-import { canonicalModelId, DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_TOKENS, endpointOf } from './config.js'
+import { canonicalModelId, DEFAULT_CONTEXT_WINDOW, DEFAULT_INPUT_MODALITIES, DEFAULT_MAX_TOKENS, endpointOf } from './config.js'
 import { llmError } from './errors.js'
 import { buildTools, projectMessages } from './projection.js'
 import type { GeminiPart } from './projection.js'
@@ -126,6 +126,8 @@ export function providerErrorText(status: number, text: string): string {
 export interface AdapterHost {
   /** Resolve the API key behind one credential reference, or undefined when absent. */
   resolveCredential(ref: string): Promise<string | undefined>
+  /** Read base64-encoded image data and its MIME type for an image attachment. */
+  readImageAttachment?(ref: unknown, signal?: AbortSignal): Promise<{ data: string; mimeType: string } | undefined>
 }
 
 /** The Gemini-on-Vertex adapter for this bundle's provider route. */
@@ -167,7 +169,12 @@ export class GoogleCloudAdapter implements LlmAdapter {
   /** @inheritdoc */
   async listModels(provider: string): Promise<readonly LlmModelInfo[]> {
     const models = await this.catalog.list()
-    return models.map((model) => ({ provider, id: model.id, name: model.name, inputModalities: ['text'] }))
+    return models.map((model) => ({
+      provider,
+      id: model.id,
+      name: model.name,
+      inputModalities: model.inputModalities ?? [...DEFAULT_INPUT_MODALITIES],
+    }))
   }
 
   /** @inheritdoc */
@@ -192,7 +199,7 @@ export class GoogleCloudAdapter implements LlmAdapter {
       name: entry.name,
       context: { contextWindow: entry.contextWindow ?? DEFAULT_CONTEXT_WINDOW },
       defaultMaxTokens: entry.maxTokens ?? DEFAULT_MAX_TOKENS,
-      inputModalities: ['text'],
+      inputModalities: entry.inputModalities ?? [...DEFAULT_INPUT_MODALITIES],
       reasoning: {
         efforts: REASONING_EFFORTS.map((effort) => ({ ...effort, id: effortOf(effort.id) })),
         defaultEffort: effortOf('off'),
@@ -224,7 +231,9 @@ export class GoogleCloudAdapter implements LlmAdapter {
     const apiKey = rawKey
 
     const modelId = canonicalModelId(options.model)
-    const projected = projectMessages(options, modelId)
+    const projected = await projectMessages(options, modelId, (ref, signal) =>
+      this.host.readImageAttachment?.(ref, signal),
+    )
     const contents = projected.contents
     // Vertex requires the request to end with a user turn. An interrupted turn
     // can leave a model turn whose tool results never arrived, which it refuses

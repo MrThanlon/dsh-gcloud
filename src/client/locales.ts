@@ -13,6 +13,8 @@ export interface Labels {
   projectIdMissing: string
   location: string
   locationHint: string
+  baseURL: string
+  baseURLHint: string
   proxy: string
   proxyHint: string
   apiKey: string
@@ -44,6 +46,8 @@ export const en: Labels = {
   projectIdMissing: 'A project id is required before Gemini can be reached.',
   location: 'Location',
   locationHint: 'Use global for Gemini 4 Argon; a regional model uses its own location, such as us-central1.',
+  baseURL: 'Base URL',
+  baseURLHint: 'Optional endpoint override; empty derives the host from the location.',
   proxy: 'Proxy',
   proxyHint:
     'Empty connects directly. Use http://, https://, socks5:// or socks5h:// (socks5h resolves the host at the proxy), or auto to read HTTPS_PROXY/ALL_PROXY.',
@@ -76,6 +80,8 @@ export const zh: Labels = {
   projectIdMissing: '必须先填写项目 ID，才能访问 Gemini。',
   location: '区域',
   locationHint: 'Gemini 4 Argon 使用 global；区域模型请填它所在的区域，例如 us-central1。',
+  baseURL: '自定义 Base URL',
+  baseURLHint: '可选的终端覆盖地址；留空将根据区域自动推导。',
   proxy: '代理',
   proxyHint:
     '留空表示直连。可填 http://、https://、socks5:// 或 socks5h://（socks5h 由代理解析域名），填 auto 读取 HTTPS_PROXY/ALL_PROXY。',

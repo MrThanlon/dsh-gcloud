@@ -20,23 +20,25 @@ export const DEFAULT_LOCATION = 'global'
 /** Capacity fallbacks for a model the catalog does not describe. */
 export const DEFAULT_CONTEXT_WINDOW = 1048576
 export const DEFAULT_MAX_TOKENS = 65536
+/** Default input modalities supported by Gemini models. */
+export const DEFAULT_INPUT_MODALITIES = ['text', 'image'] as const
 /** Longest wait for the next server-sent event before a call fails with TIMEOUT. */
 export const DEFAULT_IDLE_TIMEOUT_MS = 300000
 
 /** Models offered until the profile declares its own catalog. */
 export const MODEL_DEFAULTS = [
-  { id: 'gemini-4-argon', name: 'Gemini 4 Argon', contextWindow: 1048576, maxTokens: 1048576 },
-  { id: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash', contextWindow: 1048576, maxTokens: 65536 },
-  { id: 'gemini-3.7-flash', name: 'Gemini 3.7 Flash', contextWindow: 1048576, maxTokens: 65536 },
-  { id: 'gemini-3.6-flash', name: 'Gemini 3.6 Flash', contextWindow: 1048576, maxTokens: 65536 },
-  { id: 'gemini-3.5-flash', name: 'Gemini 3.5 Flash', contextWindow: 1048576, maxTokens: 65536 },
-  { id: 'gemini-3.5-flash-lite', name: 'Gemini 3.5 Flash-Lite', contextWindow: 1048576, maxTokens: 65536 },
-  { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro (Preview)', contextWindow: 1048576, maxTokens: 65536 },
-  { id: 'gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash-Lite', contextWindow: 1048576, maxTokens: 65536 },
-  { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash (Preview)', contextWindow: 1048576, maxTokens: 65536 },
-  { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', contextWindow: 1048576, maxTokens: 65536 },
-  { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', contextWindow: 1048576, maxTokens: 65536 },
-  { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash-Lite', contextWindow: 1048576, maxTokens: 65536 },
+  { id: 'gemini-4-argon', name: 'Gemini 4 Argon', contextWindow: 1048576, maxTokens: 1048576, inputModalities: ['text', 'image'] },
+  { id: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash', contextWindow: 1048576, maxTokens: 65536, inputModalities: ['text', 'image'] },
+  { id: 'gemini-3.7-flash', name: 'Gemini 3.7 Flash', contextWindow: 1048576, maxTokens: 65536, inputModalities: ['text', 'image'] },
+  { id: 'gemini-3.6-flash', name: 'Gemini 3.6 Flash', contextWindow: 1048576, maxTokens: 65536, inputModalities: ['text', 'image'] },
+  { id: 'gemini-3.5-flash', name: 'Gemini 3.5 Flash', contextWindow: 1048576, maxTokens: 65536, inputModalities: ['text', 'image'] },
+  { id: 'gemini-3.5-flash-lite', name: 'Gemini 3.5 Flash-Lite', contextWindow: 1048576, maxTokens: 65536, inputModalities: ['text', 'image'] },
+  { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro (Preview)', contextWindow: 1048576, maxTokens: 65536, inputModalities: ['text', 'image'] },
+  { id: 'gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash-Lite', contextWindow: 1048576, maxTokens: 65536, inputModalities: ['text', 'image'] },
+  { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash (Preview)', contextWindow: 1048576, maxTokens: 65536, inputModalities: ['text', 'image'] },
+  { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', contextWindow: 1048576, maxTokens: 65536, inputModalities: ['text', 'image'] },
+  { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', contextWindow: 1048576, maxTokens: 65536, inputModalities: ['text', 'image'] },
+  { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash-Lite', contextWindow: 1048576, maxTokens: 65536, inputModalities: ['text', 'image'] },
 ] as const
 
 /** Rewrite legacy hyphenated minor-version ids (e.g. `gemini-3-5-flash` → `gemini-3.5-flash`). */
@@ -51,6 +53,8 @@ export interface ModelEntry {
   name: string
   contextWindow?: number
   maxTokens?: number
+  inputModalities?: readonly ('text' | 'image')[]
+  input?: readonly ('text' | 'image')[]
 }
 
 const ModelSchema = z
@@ -60,8 +64,8 @@ const ModelSchema = z
     description: z.string().description('Optional one-line description kept for editing surfaces.'),
     contextWindow: z.number().step(1).min(1).description('Context window in tokens.'),
     maxTokens: z.number().step(1).min(1).description('Default output token cap.'),
-    input: z.array(z.string()).description('Input modalities a generic provider editor may write; this route is text-only.'),
-    inputModalities: z.array(z.string()).description('Input modalities a generic provider editor may write; this route is text-only.'),
+    input: z.array(z.string()).description('Input modalities; text and image are supported.'),
+    inputModalities: z.array(z.string()).description('Input modalities; text and image are supported.'),
   })
   .description('One model published by this route.')
 
@@ -104,7 +108,7 @@ export const Config = z.object({
     .volatile(),
   models: z
     .array(ModelSchema)
-    .default([...MODEL_DEFAULTS])
+    .default(MODEL_DEFAULTS.map((model) => ({ ...model, inputModalities: [...model.inputModalities] })))
     .description('Model catalog this route advertises.')
     .volatile(),
   streamIdleTimeoutMs: z
@@ -155,6 +159,18 @@ function readField<T>(field: Volatile<T> | undefined, fallback: T): T {
   return field as T
 }
 
+/** Normalize model input modalities into a deduplicated list of supported types. */
+export function normalizeModalities(modalities: unknown): readonly ('text' | 'image')[] {
+  if (!Array.isArray(modalities)) return [...DEFAULT_INPUT_MODALITIES]
+  const result: ('text' | 'image')[] = []
+  for (const item of modalities) {
+    if ((item === 'text' || item === 'image') && !result.includes(item)) {
+      result.push(item)
+    }
+  }
+  return result.length > 0 ? result : [...DEFAULT_INPUT_MODALITIES]
+}
+
 /** Keep only well-formed catalog rows so one bad row cannot break the route. */
 export function normalizeModels(models: readonly Partial<ModelEntry>[] | undefined): ModelEntry[] {
   const rows: ModelEntry[] = []
@@ -171,14 +187,18 @@ export function normalizeModels(models: readonly Partial<ModelEntry>[] | undefin
       Number.isSafeInteger(entry.maxTokens) && (entry.maxTokens as number) > 0
         ? (entry.maxTokens as number)
         : DEFAULT_MAX_TOKENS
+    const rawModalities = entry.inputModalities ?? entry.input
+    const inputModalities =
+      rawModalities !== undefined ? normalizeModalities(rawModalities) : [...DEFAULT_INPUT_MODALITIES]
     rows.push({
       id,
       name: typeof entry.name === 'string' && entry.name.trim() !== '' ? entry.name.trim() : id,
       contextWindow,
       maxTokens,
+      inputModalities,
     })
   }
-  return rows.length > 0 ? rows : MODEL_DEFAULTS.map((model) => ({ ...model }))
+  return rows.length > 0 ? rows : MODEL_DEFAULTS.map((model) => ({ ...model, inputModalities: [...model.inputModalities] }))
 }
 
 /** Snapshot the raw configuration into the values the adapter reads. */

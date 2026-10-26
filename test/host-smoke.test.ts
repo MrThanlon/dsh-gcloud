@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Offline host-half test: the transport (direct, HTTP CONNECT proxy, SOCKS5
  * proxy), the request shape, the stream-chunk state machine, thought-signature
@@ -7,6 +8,7 @@
 import assert from 'node:assert/strict'
 import { createServer as createHttpServer } from 'node:http'
 import { connect as netConnect, createServer as createTcpServer } from 'node:net'
+import { describe, test } from 'vitest'
 import { Config, apply } from '../lib/index.js'
 
 const KEY = 'AIza-test-key'
@@ -172,7 +174,7 @@ async function startSocks5Proxy({ requireAuth = false } = {}) {
 }
 
 /** Register the adapter with a fake credential service. */
-function mount(settings, { key = KEY } = {}) {
+function mount(settings, { key = KEY, attachments } = {}) {
   let adapter
   const config = Config(settings)
   apply(
@@ -188,6 +190,7 @@ function mount(settings, { key = KEY } = {}) {
       },
       get(name) {
         if (name === 'credentials') return { resolve: async () => (key === null ? undefined : { value: key }) }
+        if (name === 'attachments') return attachments
         return undefined
       },
     },
@@ -205,8 +208,8 @@ async function collect(adapter, options) {
 
 const userMessage = [{ role: 'user', content: [{ type: 'text', text: 'hello' }] }]
 
-// --- direct connection ------------------------------------------------------
-{
+describe('host smoke test', () => {
+test('direct connection', async () => {
   const target = await startTarget()
   const adapter = mount({ projectId: 'demo-project', baseURL: target.url })
   assert.deepEqual(adapter.providerInfo('google-cloud'), { id: 'google-cloud', name: 'Google Cloud' })
@@ -241,10 +244,9 @@ const userMessage = [{ role: 'user', content: [{ type: 'text', text: 'hello' }] 
   assert.deepEqual(finish.reason, { kind: 'stop' })
   assert.equal(finish.replayState.response.parts[0].thoughtSignature, 'sig-a')
   await target.close()
-}
+})
 
-// --- HTTP proxy with credentials -------------------------------------------
-{
+test('HTTP proxy with credentials', async () => {
   const target = await startTarget()
   const proxy = await startHttpProxy({ requireAuth: true })
   const adapter = mount({
@@ -258,10 +260,9 @@ const userMessage = [{ role: 'user', content: [{ type: 'text', text: 'hello' }] 
   assert.equal(chunks.filter((chunk) => chunk.type === 'text-delta').length, 2)
   await proxy.close()
   await target.close()
-}
+})
 
-// --- SOCKS5 proxy with credentials -----------------------------------------
-{
+test('SOCKS5 proxy with credentials', async () => {
   const target = await startTarget()
   const proxy = await startSocks5Proxy({ requireAuth: true })
   const adapter = mount({
@@ -275,10 +276,9 @@ const userMessage = [{ role: 'user', content: [{ type: 'text', text: 'hello' }] 
   assert.equal(chunks.filter((chunk) => chunk.type === 'text-delta').length, 2)
   await proxy.close()
   await target.close()
-}
+})
 
-// --- SOCKS5 without authentication -----------------------------------------
-{
+test('SOCKS5 without authentication', async () => {
   const target = await startTarget()
   const proxy = await startSocks5Proxy()
   const adapter = mount({ projectId: 'demo-project', baseURL: target.url, proxy: `socks5h://127.0.0.1:${proxy.port}` })
@@ -287,10 +287,9 @@ const userMessage = [{ role: 'user', content: [{ type: 'text', text: 'hello' }] 
   assert.equal(proxy.seen.target, `127.0.0.1:${target.port}`)
   await proxy.close()
   await target.close()
-}
+})
 
-// --- a refusing proxy is a TRANSPORT failure -------------------------------
-{
+test('a refusing proxy is a TRANSPORT failure', async () => {
   const proxy = await startHttpProxy({ requireAuth: true })
   const adapter = mount({ projectId: 'demo-project', baseURL: 'http://127.0.0.1:9', proxy: `http://127.0.0.1:${proxy.port}` })
   await assert.rejects(
@@ -298,10 +297,9 @@ const userMessage = [{ role: 'user', content: [{ type: 'text', text: 'hello' }] 
     (error) => error.code === 'TRANSPORT' && /proxy refused CONNECT/.test(error.message),
   )
   await proxy.close()
-}
+})
 
-// --- model discovery --------------------------------------------------------
-{
+test('model discovery', async () => {
   const target = await startTarget({
     models: [
       { name: 'publishers/google/models/gemini-4-argon', displayName: 'Gemini 4 Argon', supportedActions: ['generateContent'] },
@@ -334,27 +332,28 @@ const userMessage = [{ role: 'user', content: [{ type: 'text', text: 'hello' }] 
   )
   const resolved = await adapter.resolveModel('google-cloud', 'gemini-9-demo')
   assert.equal(resolved.context.contextWindow, 1048576)
+  assert.deepEqual(resolved.inputModalities, ['text', 'image'])
+  assert.ok(models.every((model) => model.inputModalities?.includes('image') && model.inputModalities?.includes('text')))
   // Legacy hyphenated minor-version ids resolve and stream against canonical dot ids
   const legacyResolved = await adapter.resolveModel('google-cloud', 'gemini-3-5-flash')
   assert.equal(legacyResolved.id, 'gemini-3.5-flash')
+  assert.deepEqual(legacyResolved.inputModalities, ['text', 'image'])
   await collect(adapter, { provider: 'google-cloud', model: 'gemini-3-5-flash', messages: userMessage, reasoningEffort: 'off' })
   const legacyReq = target.seen.requests.at(-1)
   assert.ok(legacyReq.url.includes('/models/gemini-3.5-flash:streamGenerateContent'))
   assert.deepEqual(JSON.parse(legacyReq.body).generationConfig.thinkingConfig, { thinkingLevel: 'MINIMAL', includeThoughts: false })
   await target.close()
-}
+})
 
-// --- discovery falls back to the configured catalog ------------------------
-{
+test('discovery falls back to the configured catalog', async () => {
   const target = await startTarget({ models: 'denied' })
   const adapter = mount({ projectId: 'demo-project', baseURL: target.url })
   const models = await adapter.listModels('google-cloud')
   assert.equal(models.length, 12)
   await target.close()
-}
+})
 
-// --- exact-model failure ----------------------------------------------------
-{
+test('exact-model failure', async () => {
   const target = await startTarget({ models: 'denied' })
   const adapter = mount({ projectId: 'demo-project', baseURL: target.url })
   await assert.rejects(
@@ -362,10 +361,9 @@ const userMessage = [{ role: 'user', content: [{ type: 'text', text: 'hello' }] 
     (error) => error.code === 'UNKNOWN_MODEL',
   )
   await target.close()
-}
+})
 
-// --- tool-call turn, then its replay ---------------------------------------
-{
+test('tool-call turn, then its replay', async () => {
   const target = await startTarget({
     sse: 'data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"read","args":{"path":"a.txt"}},"thoughtSignature":"sig-tool"}]},"finishReason":"STOP"}]}\n\n',
   })
@@ -398,10 +396,9 @@ const userMessage = [{ role: 'user', content: [{ type: 'text', text: 'hello' }] 
   const toolTurn = replay.contents.find((content) => content.parts.some((part) => part.functionResponse))
   assert.equal(toolTurn.parts[0].functionResponse.response.result, '{"ok":true}')
   await target.close()
-}
+})
 
-// --- a tool result carrying JSON Schema $ref stays text --------------------
-{
+test('a tool result carrying JSON Schema $ref stays text', async () => {
   const target = await startTarget()
   const adapter = mount({ projectId: 'demo-project', baseURL: target.url })
   const schema = JSON.stringify({
@@ -446,10 +443,9 @@ const userMessage = [{ role: 'user', content: [{ type: 'text', text: 'hello' }] 
   }
   assert.equal(hasRefKey(part.functionResponse), false)
   await target.close()
-}
+})
 
-// --- degraded foreign tool history ----------------------------------------
-{
+test('degraded foreign tool history', async () => {
   const target = await startTarget()
   const adapter = mount({ projectId: 'demo-project', baseURL: target.url })
   await collect(adapter, {
@@ -469,10 +465,9 @@ const userMessage = [{ role: 'user', content: [{ type: 'text', text: 'hello' }] 
   assert.ok(body.contents.some((content) => content.parts.some((part) => typeof part.text === 'string' && part.text.startsWith('[Tool call read('))))
   assert.ok(body.contents.some((content) => content.parts.some((part) => typeof part.text === 'string' && part.text.startsWith('[Tool result'))))
   await target.close()
-}
+})
 
-// --- missing configuration and credentials --------------------------------
-{
+test('missing configuration and credentials', async () => {
   const bare = mount({})
   await assert.rejects(
     () => collect(bare, { provider: 'google-cloud', model: 'gemini-4-argon', messages: userMessage }),
@@ -483,10 +478,9 @@ const userMessage = [{ role: 'user', content: [{ type: 'text', text: 'hello' }] 
     () => collect(noKey, { provider: 'google-cloud', model: 'gemini-4-argon', messages: userMessage }),
     (error) => error.code === 'MISSING_CREDENTIAL' && error.failure.code === 'MISSING_CREDENTIAL',
   )
-}
+})
 
-// --- a trailing unanswered model turn is dropped ---------------------------
-{
+test('a trailing unanswered model turn is dropped', async () => {
   const target = await startTarget()
   const adapter = mount({ projectId: 'demo-project', baseURL: target.url })
   await collect(adapter, {
@@ -520,10 +514,9 @@ const userMessage = [{ role: 'user', content: [{ type: 'text', text: 'hello' }] 
     'an unanswered function call is not sent',
   )
   await target.close()
-}
+})
 
-// --- text following a functionResponse is moved to the front of the turn ----
-{
+test('text following a functionResponse is moved to the front of the turn', async () => {
   const target = await startTarget()
   const adapter = mount({ projectId: 'demo-project', baseURL: target.url })
   const parts = [
@@ -556,6 +549,87 @@ const userMessage = [{ role: 'user', content: [{ type: 'text', text: 'hello' }] 
     'plain text must not follow a functionResponse inside one user turn',
   )
   await target.close()
-}
+})
+
+test('image input projection', async () => {
+  const target = await startTarget()
+  const adapter = mount({ projectId: 'demo-project', baseURL: target.url })
+  await collect(adapter, {
+    provider: 'google-cloud',
+    model: 'gemini-4-argon',
+    messages: [
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'what is in this picture?' },
+          { type: 'image', mediaType: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==' },
+        ],
+      },
+    ],
+  })
+  const requestBody = JSON.parse(target.seen.requests.at(-1).body)
+  const userContent = requestBody.contents.find((content) => content.role === 'user')
+  assert.equal(userContent.parts.length, 2)
+  assert.equal(userContent.parts[0].text, 'what is in this picture?')
+  assert.deepEqual(userContent.parts[1], {
+    inlineData: {
+      mimeType: 'image/png',
+      data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+    },
+  })
+  await target.close()
+})
+
+test('image attachment resolved via attachments service', async () => {
+  const target = await startTarget()
+  const fakeImageData = Buffer.from('FAKE_JPEG_IMAGE_BYTES')
+  const adapter = mount(
+    { projectId: 'demo-project', baseURL: target.url },
+    {
+      attachments: {
+        async readImageRequest(ref) {
+          return {
+            data: fakeImageData,
+            mediaType: ref.mediaType,
+          }
+        },
+      },
+    },
+  )
+  await collect(adapter, {
+    provider: 'google-cloud',
+    model: 'gemini-4-argon',
+    messages: [
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'describe this' },
+          {
+            type: 'image',
+            attachment: {
+              attachmentId: 'sha256:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
+              mediaType: 'image/jpeg',
+              bytes: fakeImageData.length,
+              width: 100,
+              height: 100,
+            },
+          },
+        ],
+      },
+    ],
+  })
+  const requestBody = JSON.parse(target.seen.requests.at(-1).body)
+  const userContent = requestBody.contents.find((content) => content.role === 'user')
+  assert.equal(userContent.parts.length, 2)
+  assert.equal(userContent.parts[0].text, 'describe this')
+  assert.deepEqual(userContent.parts[1], {
+    inlineData: {
+      mimeType: 'image/jpeg',
+      data: fakeImageData.toString('base64'),
+    },
+  })
+  await target.close()
+})
+})
 
 console.log('host smoke test: OK')

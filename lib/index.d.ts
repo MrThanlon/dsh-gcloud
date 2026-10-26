@@ -1,5 +1,4 @@
 import { FileAttachmentRef, ImageAttachmentRef, ImageRequestTarget } from "@deepseek-ai/dsh-attachment";
-//#region node_modules/@deepseek-ai/cosmokit/lib/types/types.d.ts
 declare function isArrayBufferLike(value: any): value is ArrayBufferLike;
 declare function isArrayBufferSource(value: any): value is Binary.Source;
 /** Binary source detection and base64/hex conversion helpers. */
@@ -13,16 +12,12 @@ declare namespace Binary {
   function toHex(source: Source): string;
   function fromHex(source: string): ArrayBuffer;
 }
-//#endregion
-//#region node_modules/@deepseek-ai/cosmokit/lib/types/misc.d.ts
 /** String/symbol keyed dictionary type. */
 type Dict<T = any, K extends string | symbol = string> = { [key in K]: T; };
 /** Wrap a value in `Promise`, preserving the resolved type of existing promises. */
 type Promisify<T> = Promise<T extends Promise<infer S> ? S : T>;
 /** Accept a value or promise unless the value type is already promise-like. */
 type Awaitable<T> = [T] extends [Promise<unknown>] ? T : T | Promise<T>;
-//#endregion
-//#region node_modules/@deepseek-ai/cosmokit/lib/types/volatile.d.ts
 /** Shared config references used by schema validators and plugin runtimes. */
 /** Recursively readonly data returned by a volatile config reference. */
 type VolatileSnapshot<T> = T extends object ? { readonly [K in keyof T]: VolatileSnapshot<T[K]>; } : T;
@@ -31,8 +26,6 @@ interface Volatile$1<T> {
   /** @returns the current immutable snapshot, including undefined for an absent value. */
   get(): VolatileSnapshot<T>;
 }
-//#endregion
-//#region node_modules/@standard-schema/spec/dist/index.d.ts
 /** The Standard Typed interface. This is a base type extended by other specs. */
 interface StandardTypedV1<Input = unknown, Output = Input> {
   /** The Standard properties. */
@@ -108,8 +101,6 @@ declare namespace StandardSchemaV1 {
   /** Infers the output type of a Standard. */
   type InferOutput<Schema extends StandardTypedV1> = StandardTypedV1.InferOutput<Schema>;
 }
-//#endregion
-//#region node_modules/@deepseek-ai/cordis/lib/types/utils.d.ts
 /** Ordered collection of disposable values with O(1) deletion by value. */
 declare class DisposableList<T extends WeakKey> {
   private sn;
@@ -141,8 +132,6 @@ declare const symbols: {
   tracker: typeof Service.tracker;
   resolveConfig: typeof Service.resolveConfig;
 };
-//#endregion
-//#region node_modules/@deepseek-ai/cordis/lib/types/registry.d.ts
 /**
  * Service dependency declaration accepted by plugins and the `@Inject`
  * decorator.
@@ -333,8 +322,6 @@ declare class RegistryService {
    */
   plugin(plugin: Plugin, config?: any, getOuterStack?: () => string[]): Fiber & PromiseLike<Fiber>;
 }
-//#endregion
-//#region node_modules/@deepseek-ai/cordis/lib/types/reflect.d.ts
 declare module './context.ts' {
   interface Context {
     /**
@@ -517,8 +504,6 @@ declare class ReflectService {
    */
   bind<T extends Function>(callback: T): T;
 }
-//#endregion
-//#region node_modules/@deepseek-ai/cordis/lib/types/fiber.d.ts
 declare module './context.ts' {
   interface Context extends Pick<Fiber, 'effect'> {
     /** The fiber (plugin runtime instance) that owns this context. */
@@ -678,8 +663,6 @@ declare class Fiber {
    */
   update(config: any, noSave?: boolean): void;
 }
-//#endregion
-//#region node_modules/@deepseek-ai/cordis/lib/types/events.d.ts
 /** Extract the parameter tuple from a function type. */
 type Parameters<F> = F extends ((...args: infer P) => any) ? P : never;
 /** Extract the return type from a function type. */
@@ -909,8 +892,6 @@ interface Events {
   /** An event is being dispatched to listeners (fired for non-internal events only). */
   'internal/dispatch'(mode: DispatchMode, name: string, args: any[], thisArg: any): void;
 }
-//#endregion
-//#region node_modules/@deepseek-ai/cordis/lib/types/logger.d.ts
 declare module './context.ts' {
   interface Intercept {
     logger: LoggerService.Intercept;
@@ -997,8 +978,6 @@ declare class LoggerService {
   private _resolveConfig;
   [symbols.invoke](name?: string): Logger;
 }
-//#endregion
-//#region node_modules/@deepseek-ai/cordis/lib/types/context.d.ts
 /**
  * Public shape of a Cordis context.
  *
@@ -1092,8 +1071,6 @@ declare class Context {
   } ? T : never): this;
   intercept(name: string, config: any): this;
 }
-//#endregion
-//#region node_modules/@deepseek-ai/cordis/lib/types/service.d.ts
 /**
  * Base class for services that expose a named API on `ctx`.
  *
@@ -1146,8 +1123,6 @@ declare abstract class Service<out T = never> {
   [symbols.resolveConfig](base?: T, head?: T): T;
   static [Symbol.hasInstance](instance: any): boolean;
 }
-//#endregion
-//#region node_modules/@deepseek-ai/schemastery/lib/types/index.d.ts
 declare const kSchema: unique symbol;
 declare global {
   namespace Schemastery {
@@ -1350,14 +1325,14 @@ type SchemaOutput<T, M extends SchemaMode> = M extends 'volatile' ? Volatile$1<T
 type SetRequired<M extends SchemaMode, R extends boolean> = M extends 'volatile' | 'volatile-defined' ? R extends true ? 'volatile-defined' : 'volatile' : R extends true ? 'defined' : 'plain';
 type Schema<S = any, T = S, Mode extends SchemaMode = 'plain'> = Schemastery<S, T, Mode>;
 declare const Schema: Schemastery.Static;
-//#endregion
-//#region src/config.d.ts
 /** One advertised model. */
 interface ModelEntry {
   id: string;
   name: string;
   contextWindow?: number;
   maxTokens?: number;
+  inputModalities?: readonly ('text' | 'image')[];
+  input?: readonly ('text' | 'image')[];
 }
 export declare const Config: Schema<Schemastery.ObjectS<NoInfer<{
   provider: Schema<string, string, "volatile-defined">;
@@ -1440,8 +1415,6 @@ interface ProviderSettings {
   models: ModelEntry[];
   streamIdleTimeoutMs: number;
 }
-//#endregion
-//#region node_modules/@deepseek-ai/dsh-brand/lib/types/index.d.ts
 /**
  * Duplicate-install-safe nominal primitive helpers.
  *
@@ -1460,8 +1433,6 @@ declare const BRAND: unique symbol;
 type Branded<B extends string> = string & {
   readonly [BRAND]: B;
 };
-//#endregion
-//#region node_modules/@deepseek-ai/dsh-typert-protocol/lib/types/owned-value.d.ts
 /** Generic invocation-owned values returned by synchronous Client Context resolvers. */
 /** Shared identity across independently bundled Context providers and Gateway. */
 declare const TYPERT_OWNED_VALUE: unique symbol;
@@ -1470,8 +1441,6 @@ interface TypertOwnedValue<Value> extends Disposable {
   readonly [TYPERT_OWNED_VALUE]: true;
   readonly value: Value;
 }
-//#endregion
-//#region node_modules/@deepseek-ai/dsh-typert-protocol/lib/types/types.d.ts
 declare const LOOKUP_HOST: unique symbol;
 declare const LOOKUP_WIRE: unique symbol;
 declare const CONTEXT_WIRE: unique symbol;
@@ -1973,8 +1942,6 @@ declare module '@deepseek-ai/cordis' {
     readonly invocation: RemoteInvocation | undefined;
   }
 }
-//#endregion
-//#region node_modules/@deepseek-ai/dsh-typert-protocol/lib/types/index.d.ts
 /** Options for an explicit Service-to-Gateway binding. */
 interface TypertGatewayBindingOptions {
   /** Wire namespace; defaults to the Cordis service key. */
@@ -1998,8 +1965,6 @@ declare abstract class TypertRemoteService<out T = never> extends Service<T> {
    */
   protected constructor(ctx: Context, serviceKey: string, options?: TypertGatewayBindingOptions);
 }
-//#endregion
-//#region node_modules/@deepseek-ai/dsh-llm/lib/types/brand.d.ts
 /** Stable identity carried by one message across inbox, log, and model-request boundaries. */
 type MessageId = Branded<'MessageId'>;
 /**
@@ -2035,8 +2000,6 @@ type ReasoningEffortId = Branded<'ReasoningEffortId'>;
  * @returns the same string, branded; no validation is performed.
  */
 declare function ReasoningEffortId(id: string): ReasoningEffortId;
-//#endregion
-//#region node_modules/@deepseek-ai/dsh-llm/lib/types/message.d.ts
 /** Provider/model identity and adapter-private replay data for an assistant message. */
 interface AssistantProviderMetadata {
   /** Provider route that produced the message. */
@@ -2132,8 +2095,6 @@ interface MessageRoleMap {
 }
 /** Any persisted conversation message, discriminated by its `role`. */
 type Message = MessageRoleMap[keyof MessageRoleMap];
-//#endregion
-//#region node_modules/@deepseek-ai/dsh-llm/lib/types/types.d.ts
 declare module '@deepseek-ai/cordis' {
   interface Events {
     /**
@@ -2648,8 +2609,6 @@ interface GenerateOptions {
    */
   purpose?: 'compaction' | 'session-title';
 }
-//#endregion
-//#region node_modules/@deepseek-ai/dsh-llm/lib/types/retry-policy.d.ts
 /** Fully resolved backoff shared by both retry modes. */
 interface ResolvedRetryBackoff {
   readonly initialDelayMs: number;
@@ -2668,8 +2627,6 @@ interface ResolvedAlwaysRetryPolicy extends ResolvedRetryBackoff {
 }
 /** Immutable provider policy captured when its adapter route is registered. */
 type ResolvedRetryPolicy = ResolvedNormalRetryPolicy | ResolvedAlwaysRetryPolicy;
-//#endregion
-//#region node_modules/@deepseek-ai/dsh-llm/lib/types/call-config.d.ts
 /** Concrete generation settings; omitted controls use the selected route's defaults. */
 interface LlmCallControls {
   reasoningEffort?: ReasoningEffortId;
@@ -2705,8 +2662,6 @@ interface LlmCallConfigAdapterDefaults {
   reasoningEffort?: true;
   maxTokens?: true;
 }
-//#endregion
-//#region node_modules/@deepseek-ai/dsh-llm/lib/types/index.d.ts
 declare module '@deepseek-ai/cordis' {
   interface Context {
     llm: LlmRuntime;
@@ -3071,8 +3026,6 @@ declare class LlmRuntime extends TypertRemoteService {
   stream(options: GenerateOptions): AsyncIterable<StreamChunk>;
   private streamWithRegistration;
 }
-//#endregion
-//#region src/projection.d.ts
 /** One Gemini content block. */
 interface GeminiPart {
   text?: string;
@@ -3086,23 +3039,32 @@ interface GeminiPart {
     name: string;
     response: unknown;
   };
+  inlineData?: {
+    mimeType: string;
+    data: string;
+  };
 }
 /** One Gemini conversation turn. */
 interface GeminiContent {
   role: 'user' | 'model';
   parts: GeminiPart[];
 }
+type ImageResolver = (ref: unknown, signal?: AbortSignal) => Promise<{
+  data: string;
+  mimeType: string;
+} | undefined> | {
+  data: string;
+  mimeType: string;
+} | undefined;
 /** One request's message projection, built once per stream. */
-export declare function projectMessages(options: GenerateOptions, model: string): {
+export declare function projectMessages(options: GenerateOptions, model: string, resolveImage?: ImageResolver): Promise<{
   contents: GeminiContent[];
   systemInstruction?: {
     parts: {
       text: string;
     }[];
   };
-};
-//#endregion
-//#region src/index.d.ts
+}>;
 /** Loader entry id; it is also the settings namespace the browser half writes. */
 export declare const ENTRY_ID = "llm-google-cloud";
 /** Host plugin name, matching the package name. */
@@ -3111,5 +3073,4 @@ export declare const name = "llm-google-cloud";
 export declare const inject: string[];
 /** Mount the adapter for this bundle's one provider route. */
 export declare function apply(ctx: Context, config: RawConfig): void;
-//#endregion
 export type { ProviderSettings, RawConfig };

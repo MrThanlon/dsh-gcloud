@@ -13,10 +13,16 @@
     "verbatimModuleSyntax": true,
     "isolatedModules": true,
     "skipLibCheck": true,
+    // Declaration emit must resolve packages through the node_modules symlinks
+    // themselves: pnpm keeps them under node_modules/.pnpm, and resolving that
+    // realpath makes TypeScript treat schemastery's Dict/Volatile types as
+    // unnameable (TS2742 fails tsdown's dts step). npm's flat layout, which this
+    // repository's package-lock.json pins, is unaffected by the flag.
+    "preserveSymlinks": true,
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
     "noEmit": true
   },
-  "include": ["src", "tsdown.config.ts", "scripts"]
+  "include": ["src", "tsdown.config.ts", "vite.config.ts", "scripts", "test"]
 }

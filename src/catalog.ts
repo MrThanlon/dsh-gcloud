@@ -8,11 +8,11 @@
  * interrogate the endpoint on every render.
  */
 import type { ModelEntry, ProviderSettings } from './config.js'
-import { canonicalModelId, DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_TOKENS, endpointOf } from './config.js'
+import { canonicalModelId, DEFAULT_CONTEXT_WINDOW, DEFAULT_INPUT_MODALITIES, DEFAULT_MAX_TOKENS, endpointOf } from './config.js'
 import { parseEndpoint, performRequest, readAll } from './transport.js'
 
-/** How long one discovery answer stands. */
-const DISCOVERY_TTL_MS = 600000
+/** How long one discovery answer stands (1 day). */
+const DISCOVERY_TTL_MS = 24 * 60 * 60 * 1000
 /** Longest one discovery call may take before the configured list applies. */
 const DISCOVERY_TIMEOUT_MS = 6000
 /** Largest listing body this module parses. */
@@ -49,9 +49,9 @@ export function discoveredModel(row: unknown, configured: readonly ModelEntry[])
   const actions = Array.isArray(record.supportedActions) ? record.supportedActions : undefined
   if (actions !== undefined && actions.length > 0 && !actions.includes('generateContent')) return undefined
   const known = configured.find((model) => model.id === id)
-  if (known !== undefined) return { ...known }
+  if (known !== undefined) return { ...known, inputModalities: known.inputModalities ?? [...DEFAULT_INPUT_MODALITIES] }
   const display = typeof record.displayName === 'string' && record.displayName.trim() !== '' ? record.displayName.trim() : id
-  return { id, name: display, contextWindow: DEFAULT_CONTEXT_WINDOW, maxTokens: DEFAULT_MAX_TOKENS }
+  return { id, name: display, contextWindow: DEFAULT_CONTEXT_WINDOW, maxTokens: DEFAULT_MAX_TOKENS, inputModalities: [...DEFAULT_INPUT_MODALITIES] }
 }
 
 /** Discovery plus exact-model lookup over the configured catalog. */
