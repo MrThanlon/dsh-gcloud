@@ -40,12 +40,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Typecheck
-        run: pnpm typecheck
-
-      - name: Test
-        run: pnpm test
-
+      # 必须先构建：test/ 里的用例直接 import ../lib/index.js、读取 ../lib/client.js，
+      # 仓库又不提交 lib/，不先 build 的话 vitest 会直接失败。
       - name: Build
         run: pnpm build
 
@@ -55,3 +51,9 @@ jobs:
           for f in lib/index.js lib/index.d.ts lib/client.js; do
             test -f "$f" || { echo "::error::缺少构建产物 $f"; exit 1; }
           done
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
