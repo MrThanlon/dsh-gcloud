@@ -1,0 +1,57 @@
+name: CI
+
+# 日常校验：构建 + 类型检查 + 测试。不发版，不接触 npm 凭证。
+
+on:
+  push:
+    branches: [main]
+    # tag 由 Publish 工作流处理，这里不重复跑
+    tags-ignore: ['**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Build & test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+      - name: Verify build output
+        run: |
+          set -eu
+          for f in lib/index.js lib/index.d.ts lib/client.js; do
+            test -f "$f" || { echo "::error::缺少构建产物 $f"; exit 1; }
+          done

@@ -1,8 +1,16 @@
 {
   "name": "dsh-google-cloud-llm",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": false,
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MrThanlon/dsh-gcloud.git"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "description": "Google Cloud (Gemini on the Gemini Enterprise Agent Platform) LLM provider for DeepSeek Harness: a Models-page provider card for the API key, project id and proxy, and a native Vertex AI streaming adapter.",
   "exports": {
     ".": {

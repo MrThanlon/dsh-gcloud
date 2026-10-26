@@ -1,0 +1,108 @@
+name: Publish
+
+# 只在 GitHub Release 发布时发版：Release → Publish a release → 填 tag（v0.2.0）
+# 平时推代码 / 提 PR 只跑 CI（见 ci.yml），不会碰 npm。
+#
+# 通过 npm Trusted Publishing（OIDC）发布：工作流里不出现任何 token，
+# pnpm publish 经 npm 用 GitHub 的 id-token 换取一次性发布凭证，并生成 provenance。
+#
+# 一次性配置（npmjs.com → 包 → Settings → Trusted Publisher → GitHub Actions）：
+#   Organization or user : MrThanlon
+#   Repository           : dsh-gcloud
+#   Workflow filename    : publish.yml      ← 只写文件名，不带 .github/workflows/ 前缀
+#   Environment          : 留空（本文件没有使用 environment；若改用环境做人工审批，两处必须一致）
+#
+# 注意：包 dsh-google-cloud-llm 首次发布时还没有 trusted publisher，
+# 需要先用一次带 2FA 的 `npm publish` 把包创建出来，才能配置 trusted publisher。
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  # 关键权限：没有 id-token: write 就无法走 OIDC，npm 会退回到要求 token
+  id-token: write
+
+concurrency:
+  group: publish-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Build, test & publish to npm
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          # 发布构建不用依赖缓存，避免拿到被污染的 node_modules
+          package-manager-cache: false
+
+      # pnpm publish 最终由 npm 执行，npm 11.5.1 起才支持 trusted publishing
+      - name: Ensure npm supports trusted publishing
+        run: |
+          set -eu
+          CURRENT="$(npm --version)"
+          echo "npm $CURRENT"
+          if [ "$(printf '%s\n%s\n' '11.5.1' "$CURRENT" | sort -V | head -n1)" != '11.5.1' ]; then
+            echo "npm 低于 11.5.1，升级中…"
+            npm install -g npm@latest
+            npm --version
+          fi
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify release tag matches package version
+        run: |
+          set -eu
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          if [ "v$PKG_VERSION" != "${GITHUB_REF_NAME}" ]; then
+            echo "::error::Release tag ${GITHUB_REF_NAME} 与 package.json 的版本 $PKG_VERSION 不一致"
+            exit 1
+          fi
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+      - name: Verify build output
+        run: |
+          set -eu
+          for f in lib/index.js lib/index.d.ts lib/client.js; do
+            test -f "$f" || { echo "::error::缺少构建产物 $f"; exit 1; }
+          done
+
+      # --no-git-checks：CI 里是 detached HEAD，跳过 pnpm 的「分支是否同步远端」等检查
+      # 版本号由 pnpm 自己判断：package.json 的 version 已在 npm 上存在时，pnpm 会直接报错，
+      # 不会静默覆盖，也不会重复发布。
+      - name: Publish
+        run: pnpm publish --provenance --no-git-checks
+
+      - name: Summary
+        run: |
+          {
+            echo "### 发布结果"
+            echo ""
+            echo "- 包：\`$(node -p "require('./package.json').name")@$(node -p "require('./package.json').version")\`"
+            echo "- Release：\`${{ github.event.release.tag_name }}\`"
+            echo "- npm：\`$(npm --version)\` / Node：\`$(node --version)\`"
+          } >> "$GITHUB_STEP_SUMMARY"
