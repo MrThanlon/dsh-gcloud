@@ -27,7 +27,8 @@
     "cordis.patch.yml",
     "locale/*.json",
     "icon.svg",
-    "README.md"
+    "README.md",
+    "README.zh.md"
   ],
   "packageManager": "pnpm@11.7.0",
   "scripts": {
