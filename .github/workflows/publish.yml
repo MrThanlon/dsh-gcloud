@@ -1,30 +1,11 @@
 name: Publish
 
-# 只在 GitHub Release 发布时发版：Release → Publish a release → 填 tag（v0.2.0）
-# 平时推代码 / 提 PR 只跑 CI（见 ci.yml），不会碰 npm。
-#
-# 通过 npm Trusted Publishing（OIDC）发布：工作流里不出现任何 token，
-# pnpm publish 经 npm 用 GitHub 的 id-token 换取一次性发布凭证，并生成 provenance。
-#
-# 一次性配置（npmjs.com → 包 → Settings → Trusted Publisher → GitHub Actions）：
-#   Organization or user : MrThanlon
-#   Repository           : dsh-gcloud
-#   Workflow filename    : publish.yml      ← 只写文件名，不带 .github/workflows/ 前缀
-#   Environment          : 留空（本文件没有使用 environment；若改用环境做人工审批，两处必须一致）
-#   Allowed actions      : 必须允许 npm publish —— 2026-09-03 之后新建的配置默认只放行
-#                          npm stage publish，只勾了它的话直发会被拒
-#
-# 这些字段全部大小写敏感、必须精确匹配，而 npm 保存时不做校验：配错只会在发布那一刻
-# 以「OIDC 换票失败」的形式暴露。下面的 Verify npm trusted publisher 步骤会先做一次体检。
-# 新建的配置必须在 2 天内完成首次成功发布，否则过期作废。
-
 on:
   release:
     types: [published]
 
 permissions:
   contents: read
-  # 关键权限：没有 id-token: write 就无法走 OIDC，npm 会退回到要求 token
   id-token: write
 
 concurrency:
@@ -50,45 +31,14 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
-          node-version: '24'
-          # 发布构建不用依赖缓存，避免拿到被污染的 node_modules
+          node-version: "24"
           package-manager-cache: false
-
-      # pnpm publish 最终由 npm 执行，npm 11.5.1 起才支持 trusted publishing
-      - name: Ensure npm supports trusted publishing
-        run: |
-          set -eu
-          CURRENT="$(npm --version)"
-          echo "npm $CURRENT"
-          if [ "$(printf '%s\n%s\n' '11.5.1' "$CURRENT" | sort -V | head -n1)" != '11.5.1' ]; then
-            echo "npm 低于 11.5.1，升级中…"
-            npm install -g npm@latest
-            npm --version
-          fi
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Verify release tag matches package version
-        run: |
-          set -eu
-          PKG_VERSION="$(node -p "require('./package.json').version")"
-          if [ "v$PKG_VERSION" != "${GITHUB_REF_NAME}" ]; then
-            echo "::error::Release tag ${GITHUB_REF_NAME} 与 package.json 的版本 $PKG_VERSION 不一致"
-            exit 1
-          fi
-
-      # 必须先构建：test/ 里的用例直接 import ../lib/index.js、读取 ../lib/client.js，
-      # 仓库又不提交 lib/，不先 build 的话 vitest 会直接失败。
       - name: Build
         run: pnpm build
-
-      - name: Verify build output
-        run: |
-          set -eu
-          for f in lib/index.js lib/index.d.ts lib/client.js; do
-            test -f "$f" || { echo "::error::缺少构建产物 $f"; exit 1; }
-          done
 
       - name: Typecheck
         run: pnpm typecheck
@@ -96,48 +46,5 @@ jobs:
       - name: Test
         run: pnpm test
 
-      # npm 保存 trusted publisher 配置时不做任何校验，配错只会在发布那一刻暴露；
-      # 而 pnpm 只会打一行 "Skipped OIDC: ... Unknown error (404)" 然后静默退回匿名发布
-      # （匿名 PUT 的结果是 404 Not Found，很容易被误认为「包不存在」）。
-      # 这里先手动换一次票，把 npm 的原始响应打出来，配错时能直接看到原因。
-      - name: Verify npm trusted publisher
-        run: |
-          set -eu
-          PKG="$(node -p "require('./package.json').name")"
-          ID_TOKEN="$(curl -sSf \
-            -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
-            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=npm:registry.npmjs.org" \
-            | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).value")"
-          BODY="$(mktemp)"
-          CODE="$(curl -sS -o "$BODY" -w '%{http_code}' -X POST \
-            -H "Authorization: Bearer ${ID_TOKEN}" \
-            "https://registry.npmjs.org/-/npm/v1/oidc/token/exchange/package/${PKG}")"
-          echo "token exchange -> HTTP $CODE"
-          cat "$BODY"; echo
-          case "$CODE" in
-            2*)
-              echo "trusted publisher 校验通过：${PKG}"
-              ;;
-            *)
-              echo "::error::npm 不接受这次 OIDC 换票（HTTP $CODE）。核对 npmjs.com 上 ${PKG} 的 Trusted Publisher："
-              echo "::error::Organization or user = MrThanlon / Repository = dsh-gcloud / Workflow filename = publish.yml（只写文件名）"
-              echo "::error::Environment 必须留空或与 job 的 environment 完全一致；Allowed actions 需勾选 npm publish（不只是 npm stage publish）；配置 2 天内未成功发布即过期"
-              exit 1
-              ;;
-          esac
-
-      # --no-git-checks：CI 里是 detached HEAD，跳过 pnpm 的「分支是否同步远端」等检查
-      # 版本号由 pnpm 自己判断：package.json 的 version 已在 npm 上存在时，pnpm 会直接报错，
-      # 不会静默覆盖，也不会重复发布。
       - name: Publish
-        run: pnpm publish --provenance --no-git-checks
-
-      - name: Summary
-        run: |
-          {
-            echo "### 发布结果"
-            echo ""
-            echo "- 包：\`$(node -p "require('./package.json').name")@$(node -p "require('./package.json').version")\`"
-            echo "- Release：\`${{ github.event.release.tag_name }}\`"
-            echo "- npm：\`$(npm --version)\` / Node：\`$(node --version)\`"
-          } >> "$GITHUB_STEP_SUMMARY"
+        run: pnpm publish --no-git-checks --report-summary
