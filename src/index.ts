@@ -9,12 +9,12 @@ import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { GoogleCloudAdapter, MODULE } from './adapter.js'
 import type { AdapterHost } from './adapter.js'
-import { Config, readConfig } from './config.js'
-import type { RawConfig, ProviderSettings } from './config.js'
+import { Config, isRouteConfigured, readConfig } from './config.js'
+import type { RawConfig, RawProfileConfig, ProviderSettings } from './config.js'
 import { assertUsableKey } from './errors.js'
 
-export { Config }
-export type { RawConfig, ProviderSettings }
+export { Config, isRouteConfigured }
+export type { RawConfig, RawProfileConfig, ProviderSettings }
 /** Exposed for the offline projection test: history → one Gemini request. */
 export { projectMessages } from './projection.js'
 
@@ -109,6 +109,16 @@ export function apply(ctx: Context, config: RawConfig): void {
         dynamicAttachments = resolved as AttachmentsService
       }
     })
+    ctxWithInject.inject(['settings'], (inner: Context) => {
+      const settings = (
+        inner as unknown as { settings?: { configure?: (policy: { auto: boolean }, owner?: unknown) => () => void } }
+      ).settings
+      const effect = (inner as unknown as { effect?: (fn: () => unknown) => void }).effect
+      const fiber = (ctx as unknown as { fiber?: unknown }).fiber
+      if (typeof settings?.configure === 'function' && typeof effect === 'function') {
+        effect(() => settings.configure!({ auto: false }, fiber))
+      }
+    })
   }
 
   const host: AdapterHost = {
@@ -199,16 +209,47 @@ export function apply(ctx: Context, config: RawConfig): void {
   }
 
   const adapter = new GoogleCloudAdapter(host, read)
-  llm.registerAdapter([read().provider], adapter)
-  // The directory entry is what puts this route on a configuration surface's
-  // provider list; `settingsPath: []` makes the whole row its profile.
+  const registration = llm.registerAdapter([read().provider], adapter) as
+    | { replace?: (routes: string[]) => void }
+    | undefined
+  const syncRegistration = (): void => {
+    if (typeof registration?.replace !== 'function') return
+    const routes = isRouteConfigured(config) ? [read().provider] : []
+    registration.replace(routes)
+  }
+  syncRegistration()
+
+  // The directory entry puts this route on the Models page's provider catalog;
+  // `settingsPath: ['providers', provider]` makes it addable from the provider
+  // dropdown when unconfigured and removable once saved in the user layer.
   const entryId = (ctx as unknown as { fiber?: { entry?: { options?: { id?: string } } } }).fiber?.entry?.options?.id
-  llm.registerConfigurableProviders([
+  const directory = llm.registerConfigurableProviders([
     {
       provider: read().provider,
       displayName: read().displayName,
       settingsNs: entryId ?? ENTRY_ID,
-      settingsPath: [],
+      settingsPath: ['providers', read().provider],
     },
-  ])
+  ]) as { replace?: (entries: readonly unknown[]) => void } | undefined
+
+  const ctxWithOn = ctx as unknown as { on?(event: string, listener: () => void): unknown }
+  if (typeof ctxWithOn.on === 'function') {
+    ctxWithOn.on('loader/volatile-update', () => {
+      try {
+        syncRegistration()
+        if (typeof directory?.replace === 'function') {
+          directory.replace([
+            {
+              provider: read().provider,
+              displayName: read().displayName,
+              settingsNs: entryId ?? ENTRY_ID,
+              settingsPath: ['providers', read().provider],
+            },
+          ])
+        }
+      } catch {
+        // Ignore transient conflict during volatile update
+      }
+    })
+  }
 }

@@ -69,7 +69,52 @@ const ModelSchema = z
   })
   .description('One model published by this route.')
 
+const ProfileSchema = z
+  .object({
+    displayName: z
+      .string()
+      .default(DEFAULT_DISPLAY_NAME)
+      .description('Provider label shown by model selectors.'),
+    projectId: z
+      .string()
+      .default('')
+      .description('Google Cloud project id or project number used in the Vertex AI request path.'),
+    location: z
+      .string()
+      .default(DEFAULT_LOCATION)
+      .description('Location the published model is served from. Gemini 4 Argon is global-only.'),
+    baseURL: z
+      .string()
+      .default('')
+      .description('Optional endpoint override; empty derives the host from the location.'),
+    proxy: z
+      .string()
+      .default('')
+      .description('Proxy URL: http://, https://, socks5:// or socks5h://; empty connects directly, "auto" reads the environment.'),
+    apiKeyEnv: z
+      .string()
+      .role('credential-ref')
+      .default(DEFAULT_API_KEY_REF)
+      .description('Credential reference for the Express-mode API key.'),
+    models: z
+      .array(ModelSchema)
+      .default(MODEL_DEFAULTS.map((model) => ({ ...model, inputModalities: [...model.inputModalities] })))
+      .description('Model catalog this route advertises.'),
+    streamIdleTimeoutMs: z
+      .number()
+      .step(1)
+      .min(1)
+      .default(DEFAULT_IDLE_TIMEOUT_MS)
+      .description('Longest wait without a server-sent event before the call fails with TIMEOUT.'),
+  })
+  .description('One configured Google Cloud provider profile.')
+
 export const Config = z.object({
+  providers: z
+    .dict(ProfileSchema)
+    .default({})
+    .description('Configured provider profiles keyed by route id.')
+    .volatile(),
   provider: z
     .string()
     .default(DEFAULT_PROVIDER)
@@ -123,9 +168,8 @@ export const Config = z.object({
 /** A value the settings service may hand over as a live reference. */
 type Volatile<T> = T | { get(): T }
 
-/** Shape the loader validates, before this module snapshots it. */
-export interface RawConfig {
-  provider?: Volatile<string>
+/** Per-provider profile fields. */
+export interface RawProfileConfig {
   displayName?: Volatile<string>
   projectId?: Volatile<string>
   location?: Volatile<string>
@@ -134,6 +178,12 @@ export interface RawConfig {
   apiKeyEnv?: Volatile<string>
   models?: Volatile<readonly Partial<ModelEntry>[]>
   streamIdleTimeoutMs?: Volatile<number>
+}
+
+/** Shape the loader validates, before this module snapshots it. */
+export interface RawConfig extends RawProfileConfig {
+  providers?: Volatile<Readonly<Record<string, RawProfileConfig | undefined>>>
+  provider?: Volatile<string>
 }
 
 /** Plain values the adapter reads on every request. */
@@ -201,20 +251,42 @@ export function normalizeModels(models: readonly Partial<ModelEntry>[] | undefin
   return rows.length > 0 ? rows : MODEL_DEFAULTS.map((model) => ({ ...model, inputModalities: [...model.inputModalities] }))
 }
 
+/** Whether the provider route is configured in the profile dict or legacy top-level settings. */
+export function isRouteConfigured(config: RawConfig | undefined): boolean {
+  if (config === undefined || config === null) return false
+  const provider = String(readField(config.provider, DEFAULT_PROVIDER)).trim() || DEFAULT_PROVIDER
+  const providers = readField(config.providers, {})
+  if (providers !== null && typeof providers === 'object') {
+    const profile =
+      (providers as Record<string, unknown>)[provider] ??
+      (providers as Record<string, unknown>)[DEFAULT_PROVIDER]
+    if (profile !== undefined && profile !== null && typeof profile === 'object') return true
+  }
+  return String(readField(config.projectId, '')).trim() !== ''
+}
+
 /** Snapshot the raw configuration into the values the adapter reads. */
 export function readConfig(config: RawConfig | undefined): ProviderSettings {
   const source = config ?? {}
+  const provider = String(readField(source.provider, DEFAULT_PROVIDER)).trim() || DEFAULT_PROVIDER
+  const providers = readField(source.providers, {})
+  const rawProfile =
+    providers !== null && typeof providers === 'object'
+      ? ((providers as Record<string, RawProfileConfig | undefined>)[provider] ??
+        (providers as Record<string, RawProfileConfig | undefined>)[DEFAULT_PROVIDER])
+      : undefined
+  const active: RawProfileConfig = rawProfile !== null && typeof rawProfile === 'object' ? rawProfile : source
   return {
-    provider: String(readField(source.provider, DEFAULT_PROVIDER)).trim() || DEFAULT_PROVIDER,
-    displayName: String(readField(source.displayName, DEFAULT_DISPLAY_NAME)).trim() || DEFAULT_DISPLAY_NAME,
-    projectId: String(readField(source.projectId, '')).trim(),
-    location: String(readField(source.location, DEFAULT_LOCATION)).trim() || DEFAULT_LOCATION,
-    baseURL: String(readField(source.baseURL, '')).trim(),
-    proxy: String(readField(source.proxy, '')).trim(),
-    apiKeyEnv: String(readField(source.apiKeyEnv, DEFAULT_API_KEY_REF)).trim() || DEFAULT_API_KEY_REF,
-    models: normalizeModels(readField(source.models, MODEL_DEFAULTS as unknown as readonly Partial<ModelEntry>[])),
+    provider,
+    displayName: String(readField(active.displayName, DEFAULT_DISPLAY_NAME)).trim() || DEFAULT_DISPLAY_NAME,
+    projectId: String(readField(active.projectId, '')).trim(),
+    location: String(readField(active.location, DEFAULT_LOCATION)).trim() || DEFAULT_LOCATION,
+    baseURL: String(readField(active.baseURL, '')).trim(),
+    proxy: String(readField(active.proxy, '')).trim(),
+    apiKeyEnv: String(readField(active.apiKeyEnv, DEFAULT_API_KEY_REF)).trim() || DEFAULT_API_KEY_REF,
+    models: normalizeModels(readField(active.models, MODEL_DEFAULTS as unknown as readonly Partial<ModelEntry>[])),
     streamIdleTimeoutMs:
-      Number(readField(source.streamIdleTimeoutMs, DEFAULT_IDLE_TIMEOUT_MS)) || DEFAULT_IDLE_TIMEOUT_MS,
+      Number(readField(active.streamIdleTimeoutMs, DEFAULT_IDLE_TIMEOUT_MS)) || DEFAULT_IDLE_TIMEOUT_MS,
   }
 }
 

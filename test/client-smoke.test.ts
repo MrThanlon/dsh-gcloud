@@ -49,10 +49,22 @@ const scope = {
   },
   async mutate(operations) {
     writes.push(operations)
-    const value = { ...snapshot.value }
+    const value = structuredClone(snapshot.value)
     for (const operation of operations) {
-      if (operation.op === 'set') value[operation.path[0]] = operation.value
-      else delete value[operation.path[0]]
+      const path = operation.path
+      if (path.length === 1) {
+        if (operation.op === 'set') value[path[0]] = operation.value
+        else delete value[path[0]]
+      } else if (path.length === 2) {
+        value[path[0]] = { ...(value[path[0]] ?? {}) }
+        if (operation.op === 'set') value[path[0]][path[1]] = operation.value
+        else delete value[path[0]][path[1]]
+      } else if (path.length === 3) {
+        value[path[0]] = { ...(value[path[0]] ?? {}) }
+        value[path[0]][path[1]] = { ...(value[path[0]][path[1]] ?? {}) }
+        if (operation.op === 'set') value[path[0]][path[1]][path[2]] = operation.value
+        else delete value[path[0]][path[1]][path[2]]
+      }
     }
     snapshot = { ...snapshot, value, revision: snapshot.revision + 1 }
     for (const listener of [...listeners]) listener()
@@ -180,14 +192,16 @@ assert.equal(field(tree, 'gcx-proxy').props.value, '')
 assert.equal(field(tree, 'gcx-models').type, 'textarea')
 assert.equal(button(tree, 'primary').props.disabled, true, 'an invalid draft cannot be saved')
 
-// --- save the project id ---------------------------------------------------
+// --- save the project id (creates providers.google-cloud profile) ----------
 field(tree, 'gcx-project').props.onChange({ target: { value: 'demo-project' } })
 tree = component(props)
 assert.equal(field(tree, 'gcx-project').props['data-invalid'], false)
 assert.equal(button(tree, 'primary').props.disabled, false)
 button(tree, 'primary').props.onClick()
 await new Promise((resolve) => setTimeout(resolve, 5))
-assert.deepEqual(writes.at(-1), [{ op: 'set', path: ['projectId'], value: 'demo-project' }])
+const profileCreate = writes.at(-1).find((op) => op.op === 'set' && op.path[0] === 'providers' && op.path[1] === 'google-cloud')
+assert.ok(profileCreate, 'creates providers.google-cloud profile')
+assert.equal(profileCreate.value.projectId, 'demo-project')
 tree = component(props)
 assert.equal(field(tree, 'gcx-project').props.value, 'demo-project')
 assert.match(text(tree), /saved/)
@@ -207,8 +221,8 @@ field(tree, 'gcx-proxy').props.onChange({ target: { value: 'socks5://127.0.0.1:1
 tree = component(props)
 button(tree, 'primary').props.onClick()
 await new Promise((resolve) => setTimeout(resolve, 5))
-const proxyWrite = writes.at(-1).find((operation) => operation.path[0] === 'proxy')
-assert.deepEqual(proxyWrite, { op: 'set', path: ['proxy'], value: 'socks5://127.0.0.1:1080' })
+const proxyWrite = writes.at(-1).find((operation) => operation.path.at(-1) === 'proxy')
+assert.deepEqual(proxyWrite, { op: 'set', path: ['providers', 'google-cloud', 'proxy'], value: 'socks5://127.0.0.1:1080' })
 tree = component(props)
 assert.equal(field(tree, 'gcx-proxy').props.value, 'socks5://127.0.0.1:1080')
 
@@ -219,10 +233,16 @@ field(tree, 'gcx-baseurl').props.onChange({ target: { value: 'https://my-custom-
 tree = component(props)
 button(tree, 'primary').props.onClick()
 await new Promise((resolve) => setTimeout(resolve, 5))
-const baseurlWrite = writes.at(-1).find((operation) => operation.path[0] === 'baseURL')
-assert.deepEqual(baseurlWrite, { op: 'set', path: ['baseURL'], value: 'https://my-custom-proxy.internal' })
+const baseurlWrite = writes.at(-1).find((operation) => operation.path.at(-1) === 'baseURL')
+assert.deepEqual(baseurlWrite, { op: 'set', path: ['providers', 'google-cloud', 'baseURL'], value: 'https://my-custom-proxy.internal' })
 tree = component(props)
 assert.equal(field(tree, 'gcx-baseurl').props.value, 'https://my-custom-proxy.internal')
+
+// --- add posture (configured: false) opens immediately without extra buttons
+const addTree = component({ ...props, configured: false })
+assert.notEqual(field(addTree, 'gcx-project'), undefined, 'add posture opens immediately')
+assert.equal(button(addTree, 'primary'), undefined, 'uses native DSH save button in add posture')
+assert.equal(button(addTree, 'quiet'), undefined, 'no extra expand button in add posture')
 
 // --- invalid catalog lines block the save --------------------------------
 field(tree, 'gcx-models').props.onChange({ target: { value: 'bad id | x' } })
@@ -250,6 +270,95 @@ assert.equal(field(tree, 'gcx-location'), undefined, 'a clean form collapses aga
 button(tree, 'quiet').props.onClick()
 tree = component(props)
 assert.equal(field(tree, 'gcx-location').props.value, 'global')
+
+// --- native ProviderEditor button bridge ----------------------------------
+let cancelClicked = 0
+const cancelListeners = new Set()
+const submitListeners = new Set()
+const cancelBtn = {
+  tagName: 'BUTTON',
+  disabled: false,
+  textContent: 'Cancel',
+  addEventListener(type, fn) { if (type === 'click') cancelListeners.add(fn) },
+  removeEventListener(type, fn) { if (type === 'click') cancelListeners.delete(fn) },
+  click() {
+    cancelClicked += 1
+    for (const fn of [...cancelListeners]) fn({ preventDefault() {}, stopImmediatePropagation() {} })
+  },
+}
+const submitBtn = {
+  tagName: 'BUTTON',
+  disabled: true,
+  textContent: 'Apply',
+  addEventListener(type, fn) { if (type === 'click') submitListeners.add(fn) },
+  removeEventListener(type, fn) { if (type === 'click') submitListeners.delete(fn) },
+  click() {
+    for (const fn of [...submitListeners]) fn({ preventDefault() {}, stopImmediatePropagation() {} })
+  },
+}
+let insertedBefore = null
+const actionsDiv = {
+  tagName: 'DIV',
+  className: '_editorActions_abc',
+  parentElement: null,
+  querySelectorAll(sel) { return sel === 'button' ? [cancelBtn, submitBtn] : [] },
+}
+const editorDiv = {
+  tagName: 'DIV',
+  className: '_editor_abc',
+  insertBefore(node, ref) {
+    node.parentElement = editorDiv
+    insertedBefore = [node, ref]
+  },
+  querySelectorAll(sel) {
+    if (sel === 'div') return [actionsDiv]
+    if (sel === 'button') return [cancelBtn, submitBtn]
+    return []
+  },
+}
+actionsDiv.parentElement = editorDiv
+const bodyEl = { tagName: 'DIV', className: 'gcx-body', parentElement: null }
+const cardEl = {
+  tagName: 'DIV',
+  className: 'gcx-card',
+  parentElement: null,
+  appendChild(node) { node.parentElement = cardEl },
+}
+bodyEl.parentElement = cardEl
+const slotAnchor = {
+  tagName: 'DIV',
+  style: { display: 'contents' },
+  getAttribute(name) { return name === 'data-slot' ? 'settings.models.provider-card' : null },
+  contains(node) { return node === cardEl },
+  parentElement: null,
+}
+const parentEl = {
+  tagName: 'LI',
+  getAttribute() { return null },
+  children: [slotAnchor, editorDiv],
+}
+cardEl.parentElement = slotAnchor
+slotAnchor.parentElement = parentEl
+globalThis.MutationObserver = class {
+  observe() {}
+  disconnect() {}
+}
+face.bindDom(cardEl)
+face.bindBodyDom(bodyEl)
+assert.deepEqual(insertedBefore, [bodyEl, actionsDiv], 'moves .gcx-body inside .editor right before .editorActions')
+let rowTree = component({ ...props, configured: true })
+assert.notEqual(field(rowTree, 'gcx-location'), undefined, 'row posture opens when native ProviderEditor is present')
+assert.equal(submitBtn.disabled, true, 'native save button starts disabled when clean')
+field(rowTree, 'gcx-location').props.onChange({ target: { value: 'europe-west1' } })
+assert.equal(submitBtn.disabled, false, 'native save button enables when dirty and valid')
+submitBtn.click()
+await new Promise((resolve) => setTimeout(resolve, 10))
+const locWrite = writes.at(-1).find((operation) => operation.path.at(-1) === 'location')
+assert.deepEqual(locWrite, { op: 'set', path: ['providers', 'google-cloud', 'location'], value: 'europe-west1' })
+assert.equal(cancelClicked, 1, 'native save button closes ProviderEditor via cancelBtn after saving')
+face.bindBodyDom(null)
+assert.equal(bodyEl.parentElement, cardEl, 'restores .gcx-body to .gcx-card before unmount')
+face.bindDom(null)
 
 // --- teardown -------------------------------------------------------------
 for (const effect of effects) {

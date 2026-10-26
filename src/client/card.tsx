@@ -1,10 +1,9 @@
 /**
  * The Google Cloud provider card on the Models page.
  *
- * It renders inside the row DSH already shows for this provider, so the plugin
- * adds no settings entry of its own. The card starts collapsed and shows the
- * connection state; its own toggle reveals the fields, which keeps the row the
- * same shape as the shipped ones.
+ * It renders inside both the "Add model provider" catalog panel (`configured === false`)
+ * and the configured provider row (`configured === true`), delegating commit/cancel
+ * to DSH's own ProviderEditor action footer and row Edit/Delete buttons.
  */
 import type { ReactNode } from 'react'
 import './harness.js'
@@ -17,12 +16,13 @@ const styles = `
 .gcx-summary{min-width:0;font-size:12px;line-height:1.5;color:var(--dsw-alias-label-secondary);overflow-wrap:anywhere}
 .gcx-body{display:grid;gap:14px}
 .gcx-field{display:grid;gap:6px}
-.gcx-label{font-size:13px;font-weight:500;line-height:1.4;color:var(--dsw-alias-label-primary)}
-.gcx-input,.gcx-textarea{box-sizing:border-box;width:100%;padding:7px 10px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:inherit;font-size:13px;line-height:1.5}
-.gcx-input:focus,.gcx-textarea:focus{outline:none;border-color:var(--dsw-alias-brand-primary)}
+.gcx-label{font-size:12px;font-weight:500;line-height:18px;color:var(--dsw-alias-label-secondary)}
+.gcx-input,.gcx-textarea{box-sizing:border-box;width:100%;padding:5px 10px;border:0.5px solid var(--dsw-alias-border-l4,var(--dsw-alias-border-l1));border-radius:var(--dsw-radius-md,8px);background:var(--dsw-alias-bg-layer-1,var(--dsw-alias-bg-base));color:var(--dsw-alias-label-primary);font:inherit;font-size:14px;line-height:22px}
+.gcx-input{height:32px}
+.gcx-input:focus,.gcx-textarea:focus{outline:none;border-color:var(--dsw-alias-state-business-primary,var(--dsw-alias-brand-primary))}
 .gcx-input[data-invalid=true],.gcx-textarea[data-invalid=true]{border-color:var(--dsw-alias-state-error-primary)}
-.gcx-textarea{min-height:96px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;resize:vertical}
-.gcx-hint{margin:0;font-size:12px;line-height:1.5;color:var(--dsw-alias-label-secondary)}
+.gcx-textarea{min-height:96px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px;line-height:1.5;resize:vertical}
+.gcx-hint{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary))}
 .gcx-hint[data-tone=warn]{color:var(--dsw-alias-state-warn-primary)}
 .gcx-hint[data-tone=error]{color:var(--dsw-alias-state-error-primary)}
 .gcx-hint[data-tone=success]{color:var(--dsw-alias-state-success-primary)}
@@ -32,6 +32,9 @@ const styles = `
 .gcx-button[data-kind=secondary]{background:transparent;border-color:var(--dsw-alias-border-l2);color:var(--dsw-alias-label-primary)}
 .gcx-button[data-kind=quiet]{background:transparent;color:var(--dsw-alias-label-secondary);padding:2px 4px}
 .gcx-button:disabled{opacity:.5;cursor:default}
+.gcx-card[data-editing=true]{display:contents}
+div[class*="editor"]:has(> .gcx-body) > p[class*="advancedHint"],
+:is(div, li):has(> [data-slot="settings.models.provider-card"] > .gcx-card, > .gcx-card) > div[class*="editor"] > p[class*="advancedHint"]{display:none}
 `
 
 /** One line describing the provider without opening the form. */
@@ -44,29 +47,40 @@ function summaryOf(view: CardView): string {
 
 /** Render the provider card. */
 export function ProviderCard(props: PropsRuntime<'settings.models.provider-card'>): ReactNode {
-  const face = props as unknown as CardFace
+  const face = props as unknown as CardFace & { configured?: boolean }
   const view = face.useCard((value) => value)
   const labels = view.labels
   const disabled = !view.writable || view.saving
-  const showForm = view.expanded && view.status !== 'unavailable'
+  const ownerConfigured = face.configured
+  const isAddPosture = ownerConfigured === false
+  const isRowPosture = ownerConfigured === true
+  const isStandalone = ownerConfigured === undefined
+  const showForm =
+    view.status !== 'unavailable' &&
+    (isAddPosture || (isRowPosture ? view.nativeEditorOpen : view.expanded))
+  const inNativeEditor = isAddPosture || (isRowPosture && view.nativeEditorOpen)
 
   return (
-    <div className="gcx-card">
+    <div className="gcx-card" data-editing={inNativeEditor || undefined} ref={face.bindDom}>
       <style>{styles}</style>
-      <div className="gcx-head">
-        <span className="gcx-summary">{summaryOf(view)}</span>
-        <button
-          className="gcx-button"
-          data-kind="quiet"
-          type="button"
-          onClick={() => {
-            if (view.expanded) face.collapse()
-            else face.expand()
-          }}
-        >
-          {view.expanded ? labels.collapse : labels.expand}
-        </button>
-      </div>
+      {!inNativeEditor ? (
+        <div className="gcx-head">
+          <span className="gcx-summary">{summaryOf(view)}</span>
+          {isStandalone ? (
+            <button
+              className="gcx-button"
+              data-kind="quiet"
+              type="button"
+              onClick={() => {
+                if (view.expanded) face.collapse()
+                else face.expand()
+              }}
+            >
+              {view.expanded ? labels.collapse : labels.expand}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       {view.status === 'loading' ? <p className="gcx-hint">{labels.loading}</p> : null}
       {view.status === 'unavailable' ? (
         <p className="gcx-hint" data-tone="warn">
@@ -79,7 +93,7 @@ export function ProviderCard(props: PropsRuntime<'settings.models.provider-card'
         </p>
       ) : null}
       {showForm ? (
-        <div className="gcx-body">
+        <div className="gcx-body" ref={face.bindBodyDom}>
           <div className="gcx-field">
             <label className="gcx-label" htmlFor="gcx-project">
               {labels.projectId}
@@ -196,35 +210,42 @@ export function ProviderCard(props: PropsRuntime<'settings.models.provider-card'
               <p className="gcx-hint">{labels.modelsHint}</p>
             )}
           </div>
-          <div className="gcx-actions">
-            <button
-              className="gcx-button"
-              data-kind="primary"
-              type="button"
-              disabled={disabled || !view.dirty || view.invalid !== null}
-              onClick={() => face.save()}
-            >
-              {view.saving ? labels.saving : labels.save}
-            </button>
-            <button
-              className="gcx-button"
-              data-kind="secondary"
-              type="button"
-              disabled={disabled || (!view.dirty && view.keyDraft === '')}
-              onClick={() => face.reset()}
-            >
-              {labels.reset}
-            </button>
-            {view.notice === 'saved' ? (
-              <span className="gcx-hint" data-tone="success">
-                {labels.saved}
-              </span>
-            ) : view.failure !== null ? (
-              <span className="gcx-hint" data-tone="error">
-                {view.failure === 'rejected' ? labels.rejected : view.failure}
-              </span>
-            ) : null}
-          </div>
+          {!isStandalone && view.failure !== null ? (
+            <p className="gcx-hint" data-tone="error">
+              {view.failure === 'rejected' ? labels.rejected : view.failure}
+            </p>
+          ) : null}
+          {isStandalone ? (
+            <div className="gcx-actions">
+              <button
+                className="gcx-button"
+                data-kind="primary"
+                type="button"
+                disabled={disabled || !view.dirty || view.invalid !== null}
+                onClick={() => face.save()}
+              >
+                {view.saving ? labels.saving : labels.save}
+              </button>
+              <button
+                className="gcx-button"
+                data-kind="secondary"
+                type="button"
+                disabled={disabled || (!view.dirty && view.keyDraft === '')}
+                onClick={() => face.reset()}
+              >
+                {labels.reset}
+              </button>
+              {view.notice === 'saved' ? (
+                <span className="gcx-hint" data-tone="success">
+                  {labels.saved}
+                </span>
+              ) : view.failure !== null ? (
+                <span className="gcx-hint" data-tone="error">
+                  {view.failure === 'rejected' ? labels.rejected : view.failure}
+                </span>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>

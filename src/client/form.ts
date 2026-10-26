@@ -1,6 +1,7 @@
 /**
  * Card state: the staged draft over the Host settings section, the credential
- * probe, and the ordered writes that persist both.
+ * probe, the ordered writes that persist both, and the DOM bridge that wires
+ * DSH's native ProviderEditor Cancel/Apply buttons to this controller.
  *
  * The form holds only the redacted Host section, so every save is a path-op
  * mutation fenced by the revision read before editing; the API key never enters
@@ -17,6 +18,22 @@ const DEFAULT_API_KEY_REF = 'GOOGLE_CLOUD_API_KEY'
 const DEFAULT_CONTEXT_WINDOW = 1048576
 const DEFAULT_MAX_TOKENS = 65536
 
+/** Fallback catalog used when neither the profile nor the root section lists models yet. */
+const DEFAULT_MODELS: readonly SectionModel[] = [
+  { id: 'gemini-4-argon', name: 'Gemini 4 Argon', contextWindow: 1048576, maxTokens: 1048576, inputModalities: ['text', 'image'] },
+  { id: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash', contextWindow: 1048576, maxTokens: 65536, inputModalities: ['text', 'image'] },
+  { id: 'gemini-3.7-flash', name: 'Gemini 3.7 Flash', contextWindow: 1048576, maxTokens: 65536, inputModalities: ['text', 'image'] },
+  { id: 'gemini-3.6-flash', name: 'Gemini 3.6 Flash', contextWindow: 1048576, maxTokens: 65536, inputModalities: ['text', 'image'] },
+  { id: 'gemini-3.5-flash', name: 'Gemini 3.5 Flash', contextWindow: 1048576, maxTokens: 65536, inputModalities: ['text', 'image'] },
+  { id: 'gemini-3.5-flash-lite', name: 'Gemini 3.5 Flash-Lite', contextWindow: 1048576, maxTokens: 65536, inputModalities: ['text', 'image'] },
+  { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro (Preview)', contextWindow: 1048576, maxTokens: 65536, inputModalities: ['text', 'image'] },
+  { id: 'gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash-Lite', contextWindow: 1048576, maxTokens: 65536, inputModalities: ['text', 'image'] },
+  { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash (Preview)', contextWindow: 1048576, maxTokens: 65536, inputModalities: ['text', 'image'] },
+  { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', contextWindow: 1048576, maxTokens: 65536, inputModalities: ['text', 'image'] },
+  { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', contextWindow: 1048576, maxTokens: 65536, inputModalities: ['text', 'image'] },
+  { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash-Lite', contextWindow: 1048576, maxTokens: 65536, inputModalities: ['text', 'image'] },
+]
+
 /** One model row as the Host section stores it. */
 export interface SectionModel {
   id?: string
@@ -27,9 +44,8 @@ export interface SectionModel {
   input?: readonly string[]
 }
 
-/** The Host section this card edits. */
-export interface ProviderSection {
-  provider?: string
+/** One provider profile stored under `providers.<route>`. */
+export interface ProfileSection {
   displayName?: string
   projectId?: string
   location?: string
@@ -38,6 +54,12 @@ export interface ProviderSection {
   apiKeyEnv?: string
   models?: readonly SectionModel[]
   streamIdleTimeoutMs?: number
+}
+
+/** The Host section this card edits. */
+export interface ProviderSection extends ProfileSection {
+  provider?: string
+  providers?: Readonly<Record<string, ProfileSection | undefined>>
 }
 
 /** Editable text fields, keyed by the draft member they write. */
@@ -49,6 +71,8 @@ export interface CardView {
   writable: boolean
   saving: boolean
   expanded: boolean
+  nativeEditorOpen: boolean
+  configured: boolean
   dirty: boolean
   invalid: 'project' | 'models' | null
   failure: string | null
@@ -70,6 +94,8 @@ export interface CardView {
 /** The inject face registered into the Models page card. */
 export interface CardFace {
   useCard: <R>(selector: (value: CardView) => R) => R
+  bindDom: (element: HTMLElement | null) => void
+  bindBodyDom: (element: HTMLElement | null) => void
   expand: () => void
   collapse: () => void
   edit: (field: DraftField, value: string) => void
@@ -174,6 +200,7 @@ export function parseModels(text: string): NormalizedSectionModel[] | undefined 
 
 /** The Host section's editable values. */
 interface Saved {
+  configured: boolean
   projectId: string
   location: string
   baseURL: string
@@ -186,19 +213,31 @@ interface Saved {
 
 /** Read the saved section into the card's editable shape. */
 function savedOf(section: ProviderSection | undefined): Saved {
-  const models = (section?.models ?? [])
+  const provider = typeof section?.provider === 'string' && section.provider !== '' ? section.provider : 'google-cloud'
+  const profile = section?.providers?.[provider] ?? section?.providers?.['google-cloud']
+  const configured = profile !== undefined && profile !== null && typeof profile === 'object'
+  const source: ProfileSection | undefined = configured ? profile : section
+  const rawModels = source?.models ?? section?.models ?? DEFAULT_MODELS
+  const parsedModels = (rawModels.length > 0 ? rawModels : DEFAULT_MODELS)
     .map((model) => normalizeModel(model))
     .filter((model): model is NormalizedSectionModel => model !== undefined)
+  const models =
+    parsedModels.length > 0
+      ? parsedModels
+      : DEFAULT_MODELS.map((model) => normalizeModel(model)).filter(
+          (model): model is NormalizedSectionModel => model !== undefined,
+        )
   return {
-    projectId: typeof section?.projectId === 'string' ? section.projectId : '',
-    location: typeof section?.location === 'string' && section.location !== '' ? section.location : 'global',
-    baseURL: typeof section?.baseURL === 'string' ? section.baseURL : '',
-    proxy: typeof section?.proxy === 'string' ? section.proxy : '',
+    configured,
+    projectId: typeof source?.projectId === 'string' ? source.projectId : '',
+    location: typeof source?.location === 'string' && source.location !== '' ? source.location : 'global',
+    baseURL: typeof source?.baseURL === 'string' ? source.baseURL : '',
+    proxy: typeof source?.proxy === 'string' ? source.proxy : '',
     modelsText: formatModels(models),
     models,
-    provider: typeof section?.provider === 'string' && section.provider !== '' ? section.provider : 'google-cloud',
+    provider,
     apiKeyEnv:
-      typeof section?.apiKeyEnv === 'string' && section.apiKeyEnv !== '' ? section.apiKeyEnv : DEFAULT_API_KEY_REF,
+      typeof source?.apiKeyEnv === 'string' && source.apiKeyEnv !== '' ? source.apiKeyEnv : DEFAULT_API_KEY_REF,
   }
 }
 
@@ -221,16 +260,25 @@ export class CardController {
   private readonly t: (key: string) => string
   private readonly store: CardStore
   private readonly offs: (() => void)[] = []
+  private readonly boundBindDom: (element: HTMLElement | null) => void
+  private readonly boundBindBodyDom: (element: HTMLElement | null) => void
   private saved: Saved
   private draft: Draft
   private keyDraft = ''
   private touched = false
   private expanded = false
+  private nativeEditorOpen = false
   private saving = false
+  private closingAfterSave = false
   private failure: string | null = null
   private notice: 'saved' | null = null
   private credential = { ref: '', configured: false, writable: true }
   private value: CardView
+  private hostEl: HTMLElement | null = null
+  private bodyEl: HTMLElement | null = null
+  private parentObserver: MutationObserver | null = null
+  private buttonObserver: MutationObserver | null = null
+  private detachButtons: (() => void) | null = null
 
   /**
    * @param ctx - the client plugin context.
@@ -241,6 +289,8 @@ export class CardController {
     this.scope = ctx.configForms.get<ProviderSection>(NS)
     this.saved = savedOf(this.scope.getSnapshot().value)
     this.draft = this.draftOf(this.saved)
+    this.boundBindDom = (element) => this.bindDom(element)
+    this.boundBindBodyDom = (element) => this.bindBodyDom(element)
     this.value = this.build()
     const listeners = new Set<() => void>()
     this.store = {
@@ -252,13 +302,15 @@ export class CardController {
     }
     this.publishTo = () => {
       this.value = this.build()
+      this.syncNativeEditorButtons()
       for (const listener of [...listeners]) listener()
     }
     this.offs.push(this.scope.subscribe(() => this.sync()))
     this.offs.push(ctx.locale.subscribe(() => this.publish()))
     this.offs.push(
       ctx.remote.$on('credentials/reference-updated', (payload) => {
-        if (payload === this.credential.ref) void this.readCredential()
+        const ref = Array.isArray(payload) ? payload[0] : payload
+        if (ref === this.credential.ref || payload === this.credential.ref) void this.readCredential()
       }),
     )
     this.publish()
@@ -267,10 +319,18 @@ export class CardController {
 
   private publishTo: () => void
 
-  /** Adopt saved values while the user has no unsaved edit. */
+  /** Adopt saved values while the user has no unsaved edit, or reset when the profile is deleted. */
   private sync(): void {
+    const wasConfigured = this.saved.configured
     this.saved = savedOf(this.scope.getSnapshot().value)
-    if (!this.touched) this.draft = this.draftOf(this.saved)
+    if (!this.touched || (wasConfigured && !this.saved.configured)) {
+      this.touched = false
+      this.keyDraft = ''
+      this.failure = null
+      this.notice = null
+      this.draft = this.draftOf(this.saved)
+    }
+    void this.readCredential()
     this.publish()
   }
 
@@ -289,21 +349,37 @@ export class CardController {
     }
   }
 
-  private build(): CardView {
-    const snapshot = this.scope.getSnapshot()
-    const models = parseModels(this.draft.modelsText)
-    const dirty =
+  private isDirty(): boolean {
+    return (
       this.draft.projectId !== this.saved.projectId ||
       this.draft.location !== this.saved.location ||
       this.draft.baseURL !== this.saved.baseURL ||
       this.draft.proxy !== this.saved.proxy ||
       this.draft.modelsText !== this.saved.modelsText ||
       this.keyDraft.trim() !== ''
+    )
+  }
+
+  private canSave(): boolean {
+    const snapshot = this.scope.getSnapshot()
+    if (!snapshot.writable || this.saving) return false
+    const models = parseModels(this.draft.modelsText)
+    if (this.draft.projectId.trim() === '' || models === undefined) return false
+    if (!this.saved.configured) return true
+    return this.isDirty()
+  }
+
+  private build(): CardView {
+    const snapshot = this.scope.getSnapshot()
+    const models = parseModels(this.draft.modelsText)
+    const dirty = this.isDirty()
     return {
       status: snapshot.status,
       writable: snapshot.writable,
       saving: this.saving,
       expanded: this.expanded || dirty,
+      nativeEditorOpen: this.nativeEditorOpen,
+      configured: this.saved.configured,
       dirty,
       invalid: this.draft.projectId.trim() === '' ? 'project' : models === undefined ? 'models' : null,
       failure: this.failure,
@@ -347,6 +423,209 @@ export class CardController {
     }
   }
 
+  /** Resolve the section container (`_addPanel_` or `_rowCard_`) above the slot anchor wrapper. */
+  private findContainer(): HTMLElement | null {
+    let el = this.hostEl?.parentElement ?? null
+    while (
+      el !== null &&
+      ((typeof el.getAttribute === 'function' && el.getAttribute('data-slot') !== null) ||
+        el.style?.display === 'contents')
+    ) {
+      el = el.parentElement
+    }
+    return el
+  }
+
+  /** Locate DSH's sibling ProviderEditor and its Cancel / Apply buttons in the same container. */
+  private findNativeEditor(): {
+    editorEl: HTMLElement
+    actionsEl: HTMLElement
+    cancelBtn: HTMLButtonElement | null
+    submitBtn: HTMLButtonElement | null
+  } | null {
+    const parent = this.findContainer()
+    if (!parent) return null
+    const children = Array.from(parent.children)
+    const editorEl = children.find(
+      (child): child is HTMLElement =>
+        child !== this.hostEl &&
+        !child.contains?.(this.hostEl) &&
+        child.tagName === 'DIV' &&
+        typeof child.className === 'string' &&
+        child.className.includes('editor'),
+    )
+    if (!editorEl) return null
+    const actionsEl =
+      Array.from(editorEl.querySelectorAll('div')).find(
+        (div) => typeof div.className === 'string' && div.className.includes('editorActions'),
+      ) ?? editorEl
+    const buttons = Array.from(actionsEl.querySelectorAll('button'))
+    return {
+      editorEl,
+      actionsEl,
+      cancelBtn: buttons[0] ?? null,
+      submitBtn: buttons[1] ?? null,
+    }
+  }
+
+  /** Move `.gcx-body` inside DSH's `.editor` container right before `.editorActions`. */
+  private placeBodyInNativeEditor(
+    found: { editorEl: HTMLElement; actionsEl: HTMLElement } | null,
+  ): void {
+    if (found === null || this.bodyEl === null) return
+    if (this.bodyEl.parentElement === found.editorEl) return
+    try {
+      if (
+        found.actionsEl !== found.editorEl &&
+        found.actionsEl.parentElement === found.editorEl &&
+        typeof found.editorEl.insertBefore === 'function'
+      ) {
+        found.editorEl.insertBefore(this.bodyEl, found.actionsEl)
+      } else if (typeof found.editorEl.appendChild === 'function') {
+        found.editorEl.appendChild(this.bodyEl)
+      }
+    } catch {
+      // Ignore in non-DOM test environments
+    }
+  }
+
+  /** Return `.gcx-body` to `.gcx-card` before React unmounts it. */
+  private restoreBodyToHost(): void {
+    if (this.bodyEl !== null && this.hostEl !== null && this.bodyEl.parentElement !== this.hostEl) {
+      try {
+        if (typeof this.hostEl.appendChild === 'function') {
+          this.hostEl.appendChild(this.bodyEl)
+        }
+      } catch {
+        this.bodyEl.remove?.()
+      }
+    }
+  }
+
+  /** Bind to the form body element so it can be placed inside DSH's `.editor` container. */
+  bindBodyDom(element: HTMLElement | null): void {
+    if (this.bodyEl === element) return
+    if (element === null) {
+      this.restoreBodyToHost()
+      this.bodyEl = null
+      return
+    }
+    this.bodyEl = element
+    this.placeBodyInNativeEditor(this.findNativeEditor())
+  }
+
+  /** Bind to the mounted card element and observe its parent for DSH's native ProviderEditor. */
+  bindDom(element: HTMLElement | null): void {
+    if (this.hostEl === element) return
+    this.teardownDom()
+    this.hostEl = element
+    if (element === null || typeof MutationObserver === 'undefined') return
+    const container = this.findContainer()
+    if (!container) return
+    this.parentObserver = new MutationObserver(() => {
+      this.syncNativeEditorPresence()
+    })
+    this.parentObserver.observe(container, { childList: true })
+    this.syncNativeEditorPresence()
+  }
+
+  private teardownDom(): void {
+    this.restoreBodyToHost()
+    this.parentObserver?.disconnect()
+    this.parentObserver = null
+    this.buttonObserver?.disconnect()
+    this.buttonObserver = null
+    this.detachButtons?.()
+    this.detachButtons = null
+    this.hostEl = null
+  }
+
+  private syncNativeEditorPresence(): void {
+    const found = this.findNativeEditor()
+    const isOpen = found !== null
+    this.buttonObserver?.disconnect()
+    this.buttonObserver = null
+    this.detachButtons?.()
+    this.detachButtons = null
+
+    if (found !== null) {
+      this.placeBodyInNativeEditor(found)
+      const { cancelBtn, submitBtn } = found
+      const onCancelClick = (): void => {
+        if (this.closingAfterSave) return
+        this.reset()
+      }
+      const onSubmitClick = (event: MouseEvent): void => {
+        event.preventDefault()
+        event.stopImmediatePropagation()
+        if (!this.canSave()) return
+        void this.saveFromNativeButton()
+      }
+      cancelBtn?.addEventListener('click', onCancelClick)
+      submitBtn?.addEventListener('click', onSubmitClick)
+      this.detachButtons = () => {
+        cancelBtn?.removeEventListener('click', onCancelClick)
+        submitBtn?.removeEventListener('click', onSubmitClick)
+      }
+      if (submitBtn !== null && typeof MutationObserver !== 'undefined') {
+        this.buttonObserver = new MutationObserver(() => {
+          this.syncNativeEditorButtons()
+        })
+        this.buttonObserver.observe(submitBtn, { attributes: true, attributeFilter: ['disabled'] })
+      }
+      this.syncNativeEditorButtons()
+    } else {
+      this.restoreBodyToHost()
+      if (this.nativeEditorOpen && !this.saving && !this.closingAfterSave) {
+        // The user collapsed the row editor via the row's Edit toggle; discard unsaved edits.
+        this.touched = false
+        this.keyDraft = ''
+        this.failure = null
+        this.notice = null
+        this.draft = this.draftOf(this.saved)
+      }
+    }
+
+    if (this.nativeEditorOpen !== isOpen) {
+      this.nativeEditorOpen = isOpen
+      this.publish()
+    }
+  }
+
+  private syncNativeEditorButtons(): void {
+    const found = this.findNativeEditor()
+    if (found === null) return
+    const { cancelBtn, submitBtn } = found
+    const targetDisabled = !this.canSave()
+    if (submitBtn !== null && submitBtn.disabled !== targetDisabled) {
+      submitBtn.disabled = targetDisabled
+    }
+    if (cancelBtn !== null && cancelBtn.disabled !== this.saving) {
+      cancelBtn.disabled = this.saving
+    }
+  }
+
+  private async saveFromNativeButton(): Promise<void> {
+    const before = this.findNativeEditor()
+    const submitBtn = before?.submitBtn ?? null
+    const idleLabel = submitBtn?.textContent ?? null
+    if (submitBtn !== null) submitBtn.textContent = labelsOf(this.t).saving
+    const ok = await this.save()
+    if (submitBtn !== null && idleLabel !== null) submitBtn.textContent = idleLabel
+    if (ok) {
+      const after = this.findNativeEditor()
+      const cancelBtn = after?.cancelBtn ?? before?.cancelBtn ?? null
+      if (cancelBtn !== null) {
+        this.closingAfterSave = true
+        try {
+          cancelBtn.click()
+        } finally {
+          this.closingAfterSave = false
+        }
+      }
+    }
+  }
+
   /** Stage one field edit. */
   edit(field: DraftField, value: string): void {
     this.draft = { ...this.draft, [field]: value }
@@ -386,37 +665,71 @@ export class CardController {
   }
 
   /** Persist the staged draft; the key stage runs before the settings stage. */
-  async save(): Promise<void> {
-    if (this.saving || !this.scope.getSnapshot().writable) return
+  async save(): Promise<boolean> {
+    if (this.saving || !this.scope.getSnapshot().writable) return false
     const saved = this.saved
     const draft = this.draft
     const models = parseModels(draft.modelsText)
     if (draft.projectId.trim() === '' || models === undefined) {
       this.publish()
-      return
+      return false
     }
     const operations: SettingsPathOpView[] = []
-    if (draft.projectId.trim() !== saved.projectId) operations.push(setOp(['projectId'], draft.projectId.trim()))
-    if (draft.location.trim() !== saved.location) {
-      operations.push(
-        draft.location.trim() === '' ? { op: 'unset', path: ['location'] } : setOp(['location'], draft.location.trim()),
-      )
+    const basePath = ['providers', saved.provider]
+    if (!saved.configured) {
+      const profile: ProfileSection = {
+        projectId: draft.projectId.trim(),
+        location: draft.location.trim() || 'global',
+        ...(draft.baseURL.trim() === '' ? {} : { baseURL: draft.baseURL.trim() }),
+        ...(draft.proxy.trim() === '' ? {} : { proxy: draft.proxy.trim() }),
+        apiKeyEnv: saved.apiKeyEnv,
+        models,
+      }
+      operations.push(setOp(basePath, profile))
+      // Clean up legacy root-level fields if present in the stored section so
+      // deleting the provider later leaves a clean namespace.
+      const rawSection = this.scope.getSnapshot().value
+      for (const legacyKey of ['projectId', 'location', 'baseURL', 'proxy', 'models', 'apiKeyEnv'] as const) {
+        if (rawSection !== undefined && legacyKey in rawSection) {
+          operations.push({ op: 'unset', path: [legacyKey] })
+        }
+      }
+    } else {
+      if (draft.projectId.trim() !== saved.projectId) {
+        operations.push(setOp([...basePath, 'projectId'], draft.projectId.trim()))
+      }
+      if (draft.location.trim() !== saved.location) {
+        operations.push(
+          draft.location.trim() === ''
+            ? { op: 'unset', path: [...basePath, 'location'] }
+            : setOp([...basePath, 'location'], draft.location.trim()),
+        )
+      }
+      if (draft.baseURL.trim() !== saved.baseURL) {
+        operations.push(
+          draft.baseURL.trim() === ''
+            ? { op: 'unset', path: [...basePath, 'baseURL'] }
+            : setOp([...basePath, 'baseURL'], draft.baseURL.trim()),
+        )
+      }
+      if (draft.proxy.trim() !== saved.proxy) {
+        operations.push(
+          draft.proxy.trim() === ''
+            ? { op: 'unset', path: [...basePath, 'proxy'] }
+            : setOp([...basePath, 'proxy'], draft.proxy.trim()),
+        )
+      }
+      if (JSON.stringify(models) !== JSON.stringify(saved.models)) {
+        operations.push(setOp([...basePath, 'models'], models))
+      }
     }
-    if (draft.baseURL.trim() !== saved.baseURL) {
-      operations.push(
-        draft.baseURL.trim() === '' ? { op: 'unset', path: ['baseURL'] } : setOp(['baseURL'], draft.baseURL.trim()),
-      )
-    }
-    if (draft.proxy.trim() !== saved.proxy) {
-      operations.push(draft.proxy.trim() === '' ? { op: 'unset', path: ['proxy'] } : setOp(['proxy'], draft.proxy.trim()))
-    }
-    if (JSON.stringify(models) !== JSON.stringify(saved.models)) operations.push(setOp(['models'], models))
 
     const key = this.keyDraft.trim()
     this.saving = true
     this.failure = null
     this.notice = null
     this.publish()
+    let succeeded = false
     try {
       if (key !== '') {
         await this.ctx.remote.credentials.set(saved.apiKeyEnv, key)
@@ -429,16 +742,18 @@ export class CardController {
       if (this.failure === null) {
         this.touched = false
         this.notice = 'saved'
+        succeeded = true
       }
     } catch (error) {
       this.failure = error instanceof Error ? error.message : String(error)
     } finally {
       this.saving = false
       this.saved = savedOf(this.scope.getSnapshot().value)
-      this.draft = this.draftOf(this.saved)
+      if (succeeded) this.draft = this.draftOf(this.saved)
       await this.readCredential()
       this.publish()
     }
+    return succeeded
   }
 
   /** The business face the slot registration injects into the card component. */
@@ -446,6 +761,8 @@ export class CardController {
     return {
       hooks: { card: this.store },
       useCard: (selector) => selector(this.store.getSnapshot()),
+      bindDom: this.boundBindDom,
+      bindBodyDom: this.boundBindBodyDom,
       expand: () => this.expand(),
       collapse: () => this.collapse(),
       edit: (field, value) => this.edit(field, value),
@@ -457,6 +774,7 @@ export class CardController {
 
   /** Release the subscriptions this controller owns. */
   dispose(): void {
+    this.teardownDom()
     for (const off of this.offs) off()
     this.offs.length = 0
   }
